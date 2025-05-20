@@ -1,0 +1,73 @@
+# .github/workflows/update_cardinals_schedule.yml
+
+name: Update Cardinals Schedule Image
+
+on:
+  schedule:
+    # Runs every day at 7:00 AM UTC (adjust as needed)
+    # Use crontab guru to help: https://crontab.guru/
+    - cron: '0 7 * * *'
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+  push:
+    branches:
+      - main # Or your default branch, e.g., master. Runs on push for testing.
+
+jobs:
+  update_image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push changes to the repository (the image)
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # Or your preferred Python version
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # This assumes your requirements.txt is in the root of your repository
+
+      - name: Run script to update image and upload to GitHub
+        env:
+          # The Python script expects GITHUB_PAT.
+          # We use the automatically provided GITHUB_TOKEN for actions running in the same repo.
+          # The script also needs GITHUB_REPO_OWNER and GITHUB_REPO_NAME.
+          # Ensure these are correctly set in your Python script, or modify the script
+          # to use github.repository_owner and github.event.repository.name if needed.
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+          # If your script needs to push to a DIFFERENT repository, you would create a 
+          # Personal Access Token (PAT) with repo scope, store it as a secret in your
+          # GitHub repository (e.g., CARDINALS_SCRIPT_PAT), and use:
+          # GITHUB_PAT: ${{ secrets.CARDINALS_SCRIPT_PAT }}
+        run: python cardinals_trmnl.py # Replace with your Python script's filename if different
+
+      - name: Verify image was created (optional check)
+        run: |
+          if [ -f cardinals_schedule_eink.png ]; then
+            echo "Image cardinals_schedule_eink.png found."
+          else
+            echo "Image cardinals_schedule_eink.png NOT found after script execution."
+            # exit 1 # Optionally fail the job if the image isn't created
+          fi
+          
+      # The Python script itself handles committing and pushing the image.
+      # If it didn't, you would add steps here to commit and push the generated image.
+      # Example (if script only creates the file locally and doesn't push):
+      # - name: Commit and push if changes
+      #   run: |
+      #     git config --global user.name 'github-actions[bot]'
+      #     git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+      #     git add cardinals_schedule_eink.png # Or the path used in your script
+      #     # Check if there are changes to commit
+      #     if ! git diff --staged --quiet; then
+      #       git commit -m "Automated Cardinals schedule image update"
+      #       git push
+      #     else
+      #       echo "No changes to commit."
+      #     fi

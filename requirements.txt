@@ -1,0 +1,5 @@
+MLB-StatsAPI
+Pillow
+requests
+pytz
+PyGithub
