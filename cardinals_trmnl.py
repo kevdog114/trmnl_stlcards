@@ -66,7 +66,7 @@ try:
     ImageFont.truetype(FONT_PATH_BOLD, 10)
     print(f"Attempting to use Liberation fonts by name: {FONT_PATH_REGULAR}, {FONT_PATH_BOLD}")
 
-    # Reduced font sizes
+    # Current font sizes
     FONT_SIZE_LARGE = 30
     FONT_SIZE_MEDIUM = 22 
     FONT_SIZE_SMALL = 18
@@ -84,7 +84,7 @@ except IOError:
         FONT_PATH_REGULAR = None # Will cause Pillow to use its default
         FONT_PATH_BOLD = None    # Will cause Pillow to use its default
 
-    # Reduced fallback sizes if custom fonts not found or fail to load
+    # Fallback sizes if custom fonts not found or fail to load
     FONT_SIZE_LARGE = 28
     FONT_SIZE_MEDIUM = 20
     FONT_SIZE_SMALL = 16
@@ -103,10 +103,14 @@ def get_team_logo(url, size):
         logo_img = logo_img.convert("RGBA")
         bg = Image.new("RGBA", logo_img.size, (255,255,255,255))
         logo_on_bg = Image.alpha_composite(bg, logo_img)
-        logo_on_bg = logo_on_bg.convert("L")
+        logo_on_bg = logo_on_bg.convert("L") # Convert to grayscale first
+        # For the logo, Floyd-Steinberg might still be better if we want some detail
+        # However, if the main concern is text crispness, and the logo is simple,
+        # dithering it separately or using NONE for the whole image is an option.
+        # For now, let's assume the whole image uses the new dither setting.
         logo_on_bg = logo_on_bg.resize(size, Image.Resampling.LANCZOS)
-        logo_bw = logo_on_bg.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
-        return logo_bw
+        # The final conversion to '1' will happen to the whole image later.
+        return logo_on_bg # Return grayscale, will be dithered with the whole image
     except requests.RequestException as e:
         print(f"Error downloading logo: {e}")
     except Exception as e:
@@ -346,11 +350,11 @@ def fetch_cardinals_data(team_id, num_days):
 
 # --- CREATE IMAGE ---
 def create_schedule_image(games, standings, logo_obj, output_filename="cardinals_schedule.png"):
+    # Create an RGB image first for drawing, then convert to 1-bit
     img = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(img)
     font_large, font_medium, font_small, font_small_bold = None, None, None, None
     try:
-        # Try loading by specific name first (Pillow often finds system fonts this way)
         if FONT_PATH_REGULAR and FONT_PATH_BOLD:
             font_large = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_LARGE)
             font_medium = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_MEDIUM)
@@ -371,26 +375,29 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     logo_y_padding = 20
     left_pane_width = LOGO_SIZE[0] + logo_x_padding * 2 
     
-    if logo_obj: img.paste(logo_obj, (logo_x_padding, logo_y_padding))
+    if logo_obj: 
+        # Paste the grayscale logo onto the RGB image
+        img.paste(logo_obj, (logo_x_padding, logo_y_padding), mask=logo_obj if logo_obj.mode == 'RGBA' else None)
+
     
     y_pos = logo_y_padding + LOGO_SIZE[1] + 20 
     standings_x = logo_x_padding
 
     draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_MEDIUM + 8 # Adjusted spacing
+    y_pos += FONT_SIZE_MEDIUM + 8 
     draw.text((standings_x, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_MEDIUM + 8 # Adjusted spacing
+    y_pos += FONT_SIZE_MEDIUM + 8 
     draw.text((standings_x, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_SMALL + 8  # Adjusted spacing
+    y_pos += FONT_SIZE_SMALL + 8  
     draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
 
     # Right Pane (Upcoming Games)
-    right_pane_x_start = left_pane_width + 20 # Adjusted gap
+    right_pane_x_start = left_pane_width + 20 
     y_pos = logo_y_padding 
     
     title_text = "Upcoming Games:"
     draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 20 # Adjusted spacing
+    y_pos += FONT_SIZE_LARGE + 20
 
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
@@ -404,16 +411,16 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             broadcast_list = game.get("broadcast", ["TBD"]) 
 
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            estimated_height = FONT_SIZE_MEDIUM + 8 + FONT_SIZE_SMALL + 8 + (FONT_SIZE_SMALL + 4) * num_tv_lines + 15 # Adjusted estimation
+            estimated_height = FONT_SIZE_MEDIUM + 8 + FONT_SIZE_SMALL + 8 + (FONT_SIZE_SMALL + 4) * num_tv_lines + 15 
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding: 
                 print(f"Not enough vertical space for game {i+1}, stopping game display.")
                 break
 
             draw.text((right_pane_x_start, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_MEDIUM + 6 # Adjusted spacing
+            y_pos += FONT_SIZE_MEDIUM + 6 
 
             draw.text((right_pane_x_start + 10, y_pos), datetime_text, font=font_small, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_SMALL + 6 # Adjusted spacing
+            y_pos += FONT_SIZE_SMALL + 6 
             
             if broadcast_list:
                 tv_label_y = y_pos
@@ -424,19 +431,21 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
                 current_line_y = tv_label_y
                 for k, channel in enumerate(broadcast_list):
                     if k > 0: 
-                         current_line_y += FONT_SIZE_SMALL + 3 # Adjusted spacing
+                         current_line_y += FONT_SIZE_SMALL + 3 
                     
                     if current_line_y > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 5) : break 
                     draw.text((channel_x_start, current_line_y), channel, font=font_small, fill=TEXT_COLOR)
                 
-                y_pos = current_line_y + FONT_SIZE_SMALL + 3 # Adjusted spacing
+                y_pos = current_line_y + FONT_SIZE_SMALL + 3 
             else: 
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 3 # Adjusted spacing
+                y_pos += FONT_SIZE_SMALL + 3 
 
-            y_pos += 15 # Adjusted gap between game entries
+            y_pos += 15 
             
-    eink_image = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
+    # Convert the final RGB image to 1-bit black and white
+    # Using Image.Dither.NONE for potentially crisper text
+    eink_image = img.convert("1", dither=Image.Dither.NONE) 
     eink_image.save(output_filename); print(f"Image saved as {output_filename}")
 
 # --- UPLOAD TO GITHUB ---
