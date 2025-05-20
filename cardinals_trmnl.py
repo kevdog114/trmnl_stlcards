@@ -289,29 +289,63 @@ def fetch_cardinals_data(team_id, num_days):
         traceback.print_exc()
 
 
-    # Fetch Standings (remains the same)
-    print("Fetching standings...")
+    # --- MODIFIED STANDINGS FETCH ---
+    print("Fetching standings using statsapi.get('standings')...")
     try:
-        standings_raw = statsapi.standings_data(leagueId="104", division="all", include_wildcard=True, season=datetime.now().year)
-        found_team = False
-        for league_id, league_data in standings_raw.items():
-            if found_team: break
-            for division_id, division_data in league_data.get('divisions', {}).items():
+        current_year = datetime.now().year
+        standings_params = {
+            'leagueId': "103,104", # For both NL and AL to cover all MLB
+            'season': str(current_year),
+            # Common standings types: 'regularSeason', 'wildCard', 'springTraining', 'postseason'
+            # We'll fetch regular season standings.
+            'standingsTypes': 'regularSeason',
+            # 'date': datetime.now().strftime('%Y-%m-%d') # Optional: for standings on a specific date
+        }
+        standings_response = statsapi.get('standings', standings_params)
+        
+        if not standings_response or 'records' not in standings_response:
+            print("Standings data is empty or not in expected format from statsapi.get('standings').")
+        else:
+            found_team = False
+            # The 'records' key usually holds an array of standings records (e.g., per division)
+            for record in standings_response.get('records', []):
                 if found_team: break
-                if 'teams' in division_data:
-                    for team_standing in division_data['teams']:
-                        if team_standing['team_id'] == team_id:
-                            wins = team_standing.get('w', 0)
-                            losses = team_standing.get('l', 0)
-                            standings_info["record"] = f"{wins}-{losses}"
-                            standings_info["rank"] = f"{team_standing.get('div_rank', 'N/A')} in {division_data.get('name_short', 'N/A')}"
-                            standings_info["gb"] = f"{team_standing.get('gb', 'N/A')} GB"
-                            found_team = True
-                            break
-        if not found_team:
-             print(f"Could not find Cardinals in standings data.")
+                if not isinstance(record, dict) or 'teamRecords' not in record:
+                    continue
+                
+                division_name = record.get('division', {}).get('nameShort', 'N/A')
+                if division_name == 'N/A' and 'league' in record: # For overall league standings if not by division
+                    division_name = record.get('league',{}).get('nameShort', 'League')
+
+
+                for team_standing in record.get('teamRecords', []):
+                    if not isinstance(team_standing, dict) or 'team' not in team_standing:
+                        continue
+                    
+                    team_api_data = team_standing.get('team', {})
+                    if not isinstance(team_api_data, dict): continue
+
+                    if team_api_data.get('id') == team_id:
+                        league_record = team_standing.get('leagueRecord', {})
+                        wins = league_record.get('wins', 0)
+                        losses = league_record.get('losses', 0)
+                        
+                        standings_info["record"] = f"{wins}-{losses}"
+                        # Division rank might be directly in team_standing or needs calculation
+                        rank_val = team_standing.get('divisionRank', team_standing.get('leagueRank', 'N/A'))
+                        gb_val = team_standing.get('gamesBack', 'N/A')
+                        if gb_val == '-': gb_val = '0.0' # API sometimes returns '-' for leader
+
+                        standings_info["rank"] = f"{rank_val} in {division_name}"
+                        standings_info["gb"] = f"{gb_val} GB"
+                        found_team = True
+                        break
+            if not found_team:
+                 print(f"Could not find Cardinals (ID: {team_id}) in standings data from statsapi.get('standings').")
+                 # For debugging: print(f"Standings response sample: {str(standings_response)[:1000]}")
     except Exception as e:
-        print(f"Error fetching standings: {e}")
+        print(f"Error fetching standings with statsapi.get('standings'): {e}")
+        traceback.print_exc()
         
     return games_info, standings_info
 
