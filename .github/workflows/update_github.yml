@@ -27,7 +27,13 @@ jobs:
         with:
           python-version: '3.10' # Or your preferred Python version
 
-      - name: Install dependencies
+      - name: Install OS dependencies (fonts)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ttf-mscorefonts-installer fontconfig
+          sudo fc-cache -fv # Refresh font cache
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -35,16 +41,7 @@ jobs:
 
       - name: Run script to update image and upload to GitHub
         env:
-          # The Python script expects GITHUB_PAT.
-          # We use the automatically provided GITHUB_TOKEN for actions running in the same repo.
-          # The script also needs GITHUB_REPO_OWNER and GITHUB_REPO_NAME.
-          # Ensure these are correctly set in your Python script, or modify the script
-          # to use github.repository_owner and github.event.repository.name if needed.
           GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-          # If your script needs to push to a DIFFERENT repository, you would create a 
-          # Personal Access Token (PAT) with repo scope, store it as a secret in your
-          # GitHub repository (e.g., CARDINALS_SCRIPT_PAT), and use:
-          # GITHUB_PAT: ${{ secrets.CARDINALS_SCRIPT_PAT }}
         run: python cardinals_trmnl.py # Replace with your Python script's filename if different
 
       - name: Verify image was created (optional check)
@@ -57,17 +54,3 @@ jobs:
           fi
           
       # The Python script itself handles committing and pushing the image.
-      # If it didn't, you would add steps here to commit and push the generated image.
-      # Example (if script only creates the file locally and doesn't push):
-      # - name: Commit and push if changes
-      #   run: |
-      #     git config --global user.name 'github-actions[bot]'
-      #     git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-      #     git add cardinals_schedule_eink.png # Or the path used in your script
-      #     # Check if there are changes to commit
-      #     if ! git diff --staged --quiet; then
-      #       git commit -m "Automated Cardinals schedule image update"
-      #       git push
-      #     else
-      #       echo "No changes to commit."
-      #     fi
