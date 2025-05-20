@@ -167,12 +167,13 @@ def get_simplified_broadcasts(game_data_item):
         if broadcast.get('isNational') or name in ["ESPN", "FOX", "FS1", "TBS", "Apple TV+", "Peacock", "MLB Network"]:
             if name: national_tv.add(name)
         elif is_tv_broadcast or name: # Assume regional if it's TV and not explicitly national
-            # Use callSign for regional if available and distinct, otherwise name
-            call_sign = broadcast.get('callSign', '')
-            if call_sign and call_sign not in name and len(call_sign) < 6: # Short call signs are usually RSNs
-                regional_tv.add(call_sign)
-            elif name:
-                regional_tv.add(name)
+            if b_type not in ["AM", "FM"]:
+                # Use callSign for regional if available and distinct, otherwise name
+                call_sign = broadcast.get('callSign', '')
+                if call_sign and call_sign not in name and len(call_sign) < 6: # Short call signs are usually RSNs
+                    regional_tv.add(call_sign)
+                elif name:
+                    regional_tv.add(name)
     
     # Build the display string
     display_list = []
