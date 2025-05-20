@@ -7,6 +7,7 @@ import pytz # For timezone conversion
 from github import Github
 from github.GithubException import UnknownObjectException
 import os
+import traceback # For more detailed error logging
 
 # --- CONFIGURATION ---
 # GitHub Configuration
@@ -58,13 +59,19 @@ TEXT_COLOR = "black"
 try:
     FONT_PATH_REGULAR = "arial.ttf"
     FONT_PATH_BOLD = "arialbd.ttf"
-    FONT_SIZE_LARGE = 30
-    FONT_SIZE_MEDIUM = 22
-    FONT_SIZE_SMALL = 18
+    # Increased font sizes
+    FONT_SIZE_LARGE = 32
+    FONT_SIZE_MEDIUM = 24
+    FONT_SIZE_SMALL = 20
 except IOError:
     print(f"Font file {FONT_PATH_REGULAR} or {FONT_PATH_BOLD} not found. Please provide a valid .ttf font path.")
     FONT_PATH_REGULAR = None
     FONT_PATH_BOLD = None
+    # Fallback sizes if custom fonts not found
+    FONT_SIZE_LARGE = 30 
+    FONT_SIZE_MEDIUM = 22
+    FONT_SIZE_SMALL = 18
+
 
 LOGO_URL = "https://a.espncdn.com/i/teamlogos/mlb/500/stl.png"
 LOGO_SIZE = (120, 120)
@@ -91,24 +98,25 @@ def get_team_logo(url, size):
 
 def format_game_time(game_date_utc_str, target_tz_str):
     """Converts UTC game time string to a user-friendly format in the target timezone."""
+    if not isinstance(game_date_utc_str, str): 
+        print(f"Warning: format_game_time received non-string input: {game_date_utc_str}")
+        return "Time TBD"
     try:
         utc_tz = pytz.utc
         target_tz = pytz.timezone(target_tz_str)
         if game_date_utc_str.endswith('Z'):
             game_date_utc_str = game_date_utc_str[:-1]
         dt_utc = None
-        # More robust parsing for various possible datetime string formats from the API
         formats_to_try = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%d"]
         for fmt in formats_to_try:
             try:
                 dt_utc = datetime.strptime(game_date_utc_str, fmt)
-                if fmt == "%Y-%m-%d": # API provided only date, time is likely TBD
+                if fmt == "%Y-%m-%d":
                      return dt_utc.strftime("%a %b %d (Time TBD)")
                 break
             except ValueError:
                 continue
         if dt_utc is None:
-            # Try to parse just the date part if full datetime fails
             try:
                 dt_utc_date_only = datetime.strptime(game_date_utc_str.split('T')[0], "%Y-%m-%d")
                 return dt_utc_date_only.strftime("%a %b %d (Time TBD)")
@@ -125,182 +133,153 @@ def format_game_time(game_date_utc_str, target_tz_str):
 
 def get_simplified_broadcasts(game_data_item):
     """Extracts key TV broadcast information from a hydrated game object.
-       Checks both game_data.broadcasts and game_data.content.media.epg
+       Returns a list of broadcast strings.
     """
     all_broadcast_items = []
-    
-    # Check direct 'broadcasts' array
     if 'broadcasts' in game_data_item and isinstance(game_data_item['broadcasts'], list):
         all_broadcast_items.extend(game_data_item['broadcasts'])
-        
-    # Check nested 'content.media.epg'
     if ('content' in game_data_item and 
         'media' in game_data_item['content'] and 
         'epg' in game_data_item['content']['media'] and 
         isinstance(game_data_item['content']['media']['epg'], list)):
         for epg_group in game_data_item['content']['media']['epg']:
-            if epg_group.get('title', '').upper() in ["MLBTV", "TV"] and isinstance(epg_group.get('items'), list):
+            epg_title_raw = epg_group.get('title', '')
+            epg_title = epg_title_raw.upper() if isinstance(epg_title_raw, str) else ''
+            if epg_title in ["MLBTV", "TV"] and isinstance(epg_group.get('items'), list):
                 all_broadcast_items.extend(epg_group['items'])
 
     if not all_broadcast_items:
-        return "TV TBD"
+        return ["TBD"] # Return list with TBD
 
-    tv_channels = []
-    has_mlbtv_type = False # Specifically for MLB.TV streams
+    has_mlbtv_type = False
     national_tv = set()
     regional_tv = set()
 
     for broadcast in all_broadcast_items:
-        b_type = broadcast.get('type', '').upper() # e.g., TV, HOME, AWAY, MLBTV
-        name = broadcast.get('name', broadcast.get('description', '')) # 'name' or 'description'
-        #media_state = broadcast.get('mediaState', '') # Helpful for MLB.TV items
+        if not isinstance(broadcast, dict): continue
+
+        b_type_raw = broadcast.get('type', '')
+        b_type = b_type_raw.upper() if isinstance(b_type_raw, str) else ''
         
-        # Consider it a TV broadcast if type is TV, or if it's a known RSN/National name
+        name_raw = broadcast.get('name', broadcast.get('description', ''))
+        name = name_raw if isinstance(name_raw, str) else ''
+
+        media_state_raw = broadcast.get('mediaState', '')
+        media_state = media_state_raw.upper() if isinstance(media_state_raw, str) else ''
+        
         is_tv_broadcast = (b_type == "TV")
 
-        if "MLB.TV" in name or b_type == "MLBTV":
+        if "MLB.TV" in name or b_type == "MLBTV" or ("MLBTV" in media_state):
             has_mlbtv_type = True
-            continue # Handle MLB.TV separately at the end
+            continue # MLB.TV will be handled at the end
 
-        # Check for national broadcasts (often have 'isNational' or specific names)
-        # The 'broadcasts' array items often have 'isNational', 'content.media.epg' items might not.
         if broadcast.get('isNational') or name in ["ESPN", "FOX", "FS1", "TBS", "Apple TV+", "Peacock", "MLB Network"]:
             if name: national_tv.add(name)
-        elif is_tv_broadcast or name: # Assume regional if it's TV and not explicitly national
+        elif is_tv_broadcast or name: # Assumed regional if TV and not explicitly national
             if b_type not in ["AM", "FM"]:
-                # Use callSign for regional if available and distinct, otherwise name
-                call_sign = broadcast.get('callSign', '')
-                if call_sign and call_sign not in name and len(call_sign) < 6: # Short call signs are usually RSNs
+                call_sign_raw = broadcast.get('callSign', '')
+                call_sign = call_sign_raw if isinstance(call_sign_raw, str) else ''
+                if call_sign and call_sign not in name and len(call_sign) < 7: # Shorter call signs
                     regional_tv.add(call_sign)
                 elif name:
                     regional_tv.add(name)
     
-    # Build the display string
     display_list = []
     if national_tv:
         display_list.extend(sorted(list(national_tv)))
     
-    # Add regional channels if space allows (e.g., up to 2-3 total channels shown)
-    if regional_tv and len(display_list) < 2:
-        display_list.extend(sorted(list(regional_tv))[:2-len(display_list)])
-
-    final_display_string = ", ".join(display_list)
+    if regional_tv:
+        allowed_regional_count = max(0, 2 - len(display_list)) 
+        if allowed_regional_count > 0:
+            display_list.extend(sorted(list(regional_tv))[:allowed_regional_count])
 
     if has_mlbtv_type:
-        if final_display_string:
-            # Avoid "MLB Network / MLB.TV" if MLB Network is already listed
-            if not ("MLB Network" in final_display_string and "MLB.TV" in "MLB.TV"): # Simplified check
-                 final_display_string += " / MLB.TV"
-        else:
-            final_display_string = "MLB.TV"
+        is_mlb_network_listed = any("MLB Network" in s for s in display_list)
+        if not is_mlb_network_listed:
+            if not display_list: 
+                display_list.append("MLB.TV")
+            elif len(display_list) < 3: 
+                display_list.append("MLB.TV")
             
-    if not final_display_string:
-        return "TV TBD"
+    if not display_list:
+        return ["TBD"] 
 
-    # Truncate if too long
-    max_len = 35
-    if len(final_display_string) > max_len:
-        final_display_string = final_display_string[:max_len-3] + "..."
-    return final_display_string
+    return display_list
 
 
 # --- FETCH MLB DATA ---
 def fetch_cardinals_data(team_id, num_days):
-    """Fetches upcoming games and current standings for the Cardinals
-    using statsapi.get('schedule', ...) for a single API call with hydration.
-    """
     games_info = []
     standings_info = {"record": "N/A", "rank": "N/A", "gb": "N/A"}
-    
     start_date_dt = datetime.now()
-    end_date_dt = start_date_dt + timedelta(days=num_days -1) # -1 because we fetch for num_days inclusive of start
-
+    end_date_dt = start_date_dt + timedelta(days=num_days -1)
     start_date_str = start_date_dt.strftime('%Y-%m-%d')
-    end_date_str = end_date_dt.strftime('%Y-%m-%d') # For multi-day schedule fetch
+    end_date_str = end_date_dt.strftime('%Y-%m-%d')
     
     print(f"Fetching hydrated schedule for Cardinals (ID: {team_id}) from {start_date_str} to {end_date_str} using statsapi.get()...")
-    
     try:
-        params = {
-            'sportId': 1,
-            'teamId': team_id,
-            'startDate': start_date_str,
-            'endDate': end_date_str,
+        schedule_params = {
+            'sportId': 1, 'teamId': team_id, 'startDate': start_date_str, 'endDate': end_date_str,
             'hydrate': 'team,broadcasts(all),linescore,game(content(media(epg))),series(content)'
-            # 'game(content(media(epg)))' is important for some broadcast info
-            # 'series(content)' might provide context but not strictly needed for games
         }
-        schedule_response = statsapi.get('schedule', params)
+        schedule_response = statsapi.get('schedule', schedule_params)
 
         if not schedule_response or 'dates' not in schedule_response:
-            print("No schedule data returned or unexpected format.")
-            return games_info, standings_info
+            print("No schedule data returned or unexpected format from statsapi.get('schedule').")
+            # Fallback removed as per user request
+            # If the primary fetch fails, games_info will remain empty for the schedule part.
+        else:
+            processed_games_count = 0
+            for date_obj in schedule_response.get('dates', []):
+                for game_data in date_obj.get('games', []): 
+                    if processed_games_count >= num_days: break
+                    
+                    game_status_obj = game_data.get('status', {})
+                    game_status = game_status_obj.get('abstractGameState', 'Unknown') if isinstance(game_status_obj, dict) else 'Unknown'
 
-        processed_games_count = 0
-        for date_obj in schedule_response.get('dates', []):
-            for game_data in date_obj.get('games', []):
-                if processed_games_count >= num_days:
-                    break 
+                    if game_status in ["Final", "Game Over", "Completed Early", "Cancelled"]: continue
 
-                # Ensure this game involves the target team_id, as schedule might return other games on that day too
-                # if not (game_data['teams']['home']['team']['id'] == team_id or \
-                #         game_data['teams']['away']['team']['id'] == team_id):
-                #     continue
-                # The teamId parameter in the API call should already filter this, but double check if needed.
+                    teams_data = game_data.get('teams', {})
+                    home_team_data = teams_data.get('home', {}).get('team', {}) if isinstance(teams_data.get('home',{}), dict) else {}
+                    away_team_data = teams_data.get('away', {}).get('team', {}) if isinstance(teams_data.get('away',{}), dict) else {}
+                    
+                    opponent_name = "vs Unknown"
+                    home_id = home_team_data.get('id')
+                    away_id = away_team_data.get('id')
 
-                game_status = game_data.get('status', {}).get('abstractGameState', 'Unknown')
-                if game_status in ["Final", "Game Over", "Completed Early", "Cancelled"]:
-                    continue
+                    if home_id == team_id:
+                        opponent_name = f"vs {away_team_data.get('name', 'Opponent')}"
+                    elif away_id == team_id:
+                        opponent_name = f"@ {home_team_data.get('name', 'Opponent')}"
+                    else: continue 
 
-                # Opponent
-                home_team_data = game_data.get('teams', {}).get('home', {}).get('team', {})
-                away_team_data = game_data.get('teams', {}).get('away', {}).get('team', {})
-                
-                opponent_name = "vs Unknown"
-                if home_team_data.get('id') == team_id:
-                    opponent_name = f"vs {away_team_data.get('name', 'Opponent')}"
-                elif away_team_data.get('id') == team_id:
-                    opponent_name = f"@ {home_team_data.get('name', 'Opponent')}"
-                else: # Should not happen if teamId filter works
-                    continue 
+                    broadcast_str_list = get_simplified_broadcasts(game_data) 
+                    
+                    game_datetime_utc_str = game_data.get('gameDate') 
+                    if not game_datetime_utc_str and isinstance(date_obj, dict): 
+                        game_datetime_utc_str = date_obj.get('date')
+                    
+                    formatted_time = format_game_time(game_datetime_utc_str, DISPLAY_TIMEZONE)
 
-                # Broadcasts - use the helper that checks multiple locations
-                broadcast_str = get_simplified_broadcasts(game_data)
-                
-                # Game time
-                game_datetime_utc_str = game_data.get('gameDate') # This is usually in '2024-05-20T23:10:00Z' format
-                if not game_datetime_utc_str: # Fallback if gameDate is missing
-                    game_datetime_utc_str = date_obj.get('date') # Use the date of the current iteration
-                
-                formatted_time = format_game_time(game_datetime_utc_str, DISPLAY_TIMEZONE)
-
-                games_info.append({
-                    "opponent": opponent_name,
-                    "datetime": formatted_time,
-                    "broadcast": broadcast_str,
-                    "status": game_status
-                })
-                processed_games_count += 1
-            if processed_games_count >= num_days:
-                break
+                    games_info.append({
+                        "opponent": opponent_name, "datetime": formatted_time,
+                        "broadcast": broadcast_str_list, 
+                        "status": game_status
+                    })
+                    processed_games_count += 1
+                if processed_games_count >= num_days: break
         
     except Exception as e:
-        print(f"Error fetching and processing hydrated game schedule with statsapi.get(): {e}")
-        import traceback
+        print(f"Error in fetch_cardinals_data (schedule part): {e}")
         traceback.print_exc()
 
-
-    # --- MODIFIED STANDINGS FETCH ---
     print("Fetching standings using statsapi.get('standings')...")
     try:
         current_year = datetime.now().year
         standings_params = {
-            'leagueId': "103,104", # For both NL and AL to cover all MLB
+            'leagueId': "103,104", 
             'season': str(current_year),
-            # Common standings types: 'regularSeason', 'wildCard', 'springTraining', 'postseason'
-            # We'll fetch regular season standings.
             'standingsTypes': 'regularSeason',
-            # 'date': datetime.now().strftime('%Y-%m-%d') # Optional: for standings on a specific date
         }
         standings_response = statsapi.get('standings', standings_params)
         
@@ -308,34 +287,32 @@ def fetch_cardinals_data(team_id, num_days):
             print("Standings data is empty or not in expected format from statsapi.get('standings').")
         else:
             found_team = False
-            # The 'records' key usually holds an array of standings records (e.g., per division)
             for record in standings_response.get('records', []):
                 if found_team: break
-                if not isinstance(record, dict) or 'teamRecords' not in record:
-                    continue
+                if not isinstance(record, dict) or 'teamRecords' not in record: continue
                 
-                division_name = record.get('division', {}).get('nameShort', 'N/A')
-                if division_name == 'N/A' and 'league' in record: # For overall league standings if not by division
-                    division_name = record.get('league',{}).get('nameShort', 'League')
-
+                division_name_obj = record.get('division', {})
+                division_name = division_name_obj.get('nameShort', 'N/A') if isinstance(division_name_obj, dict) else 'N/A'
+                
+                if division_name == 'N/A' and 'league' in record: 
+                    league_name_obj = record.get('league',{})
+                    division_name = league_name_obj.get('nameShort', 'League') if isinstance(league_name_obj, dict) else 'League'
 
                 for team_standing in record.get('teamRecords', []):
-                    if not isinstance(team_standing, dict) or 'team' not in team_standing:
-                        continue
+                    if not isinstance(team_standing, dict) or 'team' not in team_standing: continue
                     
                     team_api_data = team_standing.get('team', {})
                     if not isinstance(team_api_data, dict): continue
 
                     if team_api_data.get('id') == team_id:
                         league_record = team_standing.get('leagueRecord', {})
-                        wins = league_record.get('wins', 0)
-                        losses = league_record.get('losses', 0)
+                        wins = league_record.get('wins', 0) if isinstance(league_record, dict) else 0
+                        losses = league_record.get('losses', 0) if isinstance(league_record, dict) else 0
                         
                         standings_info["record"] = f"{wins}-{losses}"
-                        # Division rank might be directly in team_standing or needs calculation
                         rank_val = team_standing.get('divisionRank', team_standing.get('leagueRank', 'N/A'))
                         gb_val = team_standing.get('gamesBack', 'N/A')
-                        if gb_val == '-': gb_val = '0.0' # API sometimes returns '-' for leader
+                        if gb_val == '-': gb_val = '0.0' 
 
                         standings_info["rank"] = f"{rank_val} in {division_name}"
                         standings_info["gb"] = f"{gb_val} GB"
@@ -343,83 +320,86 @@ def fetch_cardinals_data(team_id, num_days):
                         break
             if not found_team:
                  print(f"Could not find Cardinals (ID: {team_id}) in standings data from statsapi.get('standings').")
-                 # For debugging: print(f"Standings response sample: {str(standings_response)[:1000]}")
     except Exception as e:
         print(f"Error fetching standings with statsapi.get('standings'): {e}")
         traceback.print_exc()
         
     return games_info, standings_info
 
-# --- CREATE IMAGE (remains largely the same) ---
+# --- CREATE IMAGE ---
 def create_schedule_image(games, standings, logo_obj, output_filename="cardinals_schedule.png"):
-    """Creates the e-ink image with schedule and standings."""
     img = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(img)
+    font_large, font_medium, font_small, font_small_bold = None, None, None, None
     try:
         font_large = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_LARGE) if FONT_PATH_BOLD else ImageFont.load_default()
         font_medium = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_MEDIUM) if FONT_PATH_REGULAR else ImageFont.load_default()
         font_small = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_SMALL) if FONT_PATH_REGULAR else ImageFont.load_default()
+        font_small_bold = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_SMALL) if FONT_PATH_BOLD else font_small 
     except IOError:
-        print("Defaulting to Pillow's load_default() font.")
-        font_large = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
+        print("One or more font files not found. Defaulting to Pillow's load_default() font.")
+        font_large = ImageFont.load_default(); font_medium = ImageFont.load_default(); 
+        font_small = ImageFont.load_default(); font_small_bold = ImageFont.load_default()
     
     left_pane_width = LOGO_SIZE[0] + 40
-    if logo_obj:
-        img.paste(logo_obj, (20, 20))
+    if logo_obj: img.paste(logo_obj, (20, 20))
     y_pos = LOGO_SIZE[1] + 40
-    draw.text((20, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
-    y_pos += 35
-    draw.text((20, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR)
-    y_pos += 30
-    draw.text((20, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR)
-    y_pos += 25
+    draw.text((20, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 5 
+    draw.text((20, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 5
+    draw.text((20, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR); y_pos += FONT_SIZE_SMALL + 5
     draw.text((20, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
 
-    right_pane_x_start = left_pane_width + 20
-    y_pos = 20
+    right_pane_x_start = left_pane_width + 20; y_pos = 20
     draw.text((right_pane_x_start, y_pos), "Upcoming Games:", font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 15
+    y_pos += FONT_SIZE_LARGE + 20 
+
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
         for i, game in enumerate(games):
-            if i >= 5 : break # Limit display to 5 games
-            opponent_text = game.get("opponent", "N/A")
+            if i >= 4 : break 
+            
+            opponent_text = game.get("opponent", "N/A"); 
             datetime_text = game.get("datetime", "N/A")
-            broadcast_text = f"TV: {game.get('broadcast', 'N/A')}"
-            draw.text((right_pane_x_start, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_MEDIUM + 5
-            draw.text((right_pane_x_start + 10, y_pos), datetime_text, font=font_small, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_SMALL + 5
-            draw.text((right_pane_x_start + 10, y_pos), broadcast_text, font=font_small, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_SMALL + 15
-            if y_pos > IMAGE_HEIGHT - FONT_SIZE_SMALL - 10:
-                break
-    eink_image = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
-    eink_image.save(output_filename)
-    print(f"Image saved as {output_filename}")
+            broadcast_list = game.get("broadcast", ["TBD"]) 
 
-# --- UPLOAD TO GITHUB (remains the same) ---
+            draw.text((right_pane_x_start, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
+            y_pos += FONT_SIZE_MEDIUM + 7 
+
+            draw.text((right_pane_x_start + 10, y_pos), datetime_text, font=font_small, fill=TEXT_COLOR)
+            y_pos += FONT_SIZE_SMALL + 7 
+            
+            if broadcast_list:
+                first_b_line = f"TV: {broadcast_list[0]}"
+                draw.text((right_pane_x_start + 10, y_pos), first_b_line, font=font_small_bold, fill=TEXT_COLOR)
+                y_pos += FONT_SIZE_SMALL + 3 
+
+                indent_x = right_pane_x_start + 10 + 15 
+                for k in range(1, len(broadcast_list)):
+                    if y_pos > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 10) : break 
+                    draw.text((indent_x, y_pos), broadcast_list[k], font=font_small, fill=TEXT_COLOR)
+                    y_pos += FONT_SIZE_SMALL + 3 
+            else: 
+                draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
+                y_pos += FONT_SIZE_SMALL + 5
+
+            y_pos += 12 
+            if y_pos > IMAGE_HEIGHT - (FONT_SIZE_MEDIUM + FONT_SIZE_SMALL*2 + 20) : 
+                break 
+                
+    eink_image = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
+    eink_image.save(output_filename); print(f"Image saved as {output_filename}")
+
+# --- UPLOAD TO GITHUB ---
 def upload_to_github(token, repo_owner, repo_name, file_path_in_repo, local_file_path, commit_msg):
-    """Uploads the generated image to the specified GitHub repository."""
-    if not token:
-        print("GitHub token not provided. Skipping upload.")
-        return
+    if not token: print("GitHub token not provided. Skipping upload."); return
     if not repo_owner or not repo_name or repo_owner == "YOUR_GITHUB_USERNAME" or repo_name == "YOUR_REPOSITORY_NAME":
-        print("GitHub repository owner or name not properly configured. Skipping upload.")
-        return
+        print("GitHub repository owner or name not properly configured. Skipping upload."); return
     try:
-        g = Github(token)
-        # Correct way to get repo:
-        repo = g.get_repo(f"{repo_owner}/{repo_name}")
-    except Exception as e:
-        print(f"Error accessing GitHub repository {repo_owner}/{repo_name}: {e}")
-        return
+        g = Github(token); repo = g.get_repo(f"{repo_owner}/{repo_name}")
+    except Exception as e: print(f"Error accessing GitHub repository {repo_owner}/{repo_name}: {e}"); return
     try:
-        with open(local_file_path, "rb") as f:
-            content = f.read()
+        with open(local_file_path, "rb") as f: content = f.read()
         try:
             existing_file = repo.get_contents(file_path_in_repo)
             repo.update_file(path=file_path_in_repo, message=commit_msg, content=content, sha=existing_file.sha)
@@ -427,15 +407,10 @@ def upload_to_github(token, repo_owner, repo_name, file_path_in_repo, local_file
         except UnknownObjectException:
             repo.create_file(path=file_path_in_repo, message=commit_msg, content=content)
             print(f"Successfully created {file_path_in_repo} in {repo_owner}/{repo_name}")
-    except FileNotFoundError:
-        print(f"Local image file {local_file_path} not found. Skipping upload.")
-    except Exception as e:
-        print(f"Error uploading file to GitHub: {e}")
-        import traceback
-        traceback.print_exc()
+    except FileNotFoundError: print(f"Local image file {local_file_path} not found. Skipping upload.")
+    except Exception as e: print(f"Error uploading file to GitHub: {e}"); traceback.print_exc()
 
-
-# --- MAIN EXECUTION (remains the same) ---
+# --- MAIN EXECUTION ---
 if __name__ == "__main__":
     if not GITHUB_TOKEN or GITHUB_REPO_OWNER == "YOUR_GITHUB_USERNAME" or GITHUB_REPO_NAME == "YOUR_REPOSITORY_NAME":
         print("WARNING: GitHub credentials are not fully set. Upload will be skipped unless configured.")
@@ -444,19 +419,17 @@ if __name__ == "__main__":
     upcoming_games, current_standings = fetch_cardinals_data(TEAM_ID, DAYS_AHEAD)
     print("\nFetched Games (Using statsapi.get for schedule):")
     if upcoming_games:
-        for game in upcoming_games:
-            print(f"- {game['opponent']} on {game['datetime']} (TV: {game['broadcast']})")
-    else:
-        print("No upcoming games data fetched or error during fetch.")
+        for game in upcoming_games: 
+            broadcast_display = "/".join(game['broadcast']) if isinstance(game['broadcast'], list) else game['broadcast']
+            print(f"- {game['opponent']} on {game['datetime']} (TV: {broadcast_display})")
+    else: print("No upcoming games data fetched or error during fetch.")
     print("\nCurrent Standings:")
     print(f"- Record: {current_standings['record']}")
     print(f"- Rank: {current_standings['rank']}")
     print(f"- GB: {current_standings['gb']}")
 
     cardinals_logo = get_team_logo(LOGO_URL, LOGO_SIZE)
-    if not cardinals_logo:
-        print("Could not load logo. Proceeding without it.")
-
+    if not cardinals_logo: print("Could not load logo. Proceeding without it.")
     local_image_filename = "cardinals_schedule_eink.png"
     create_schedule_image(upcoming_games, current_standings, cardinals_logo, local_image_filename)
 
@@ -464,8 +437,6 @@ if __name__ == "__main__":
          if GITHUB_TOKEN and GITHUB_REPO_OWNER != "YOUR_GITHUB_USERNAME" and GITHUB_REPO_NAME != "YOUR_REPOSITORY_NAME":
             print(f"\nUploading {local_image_filename} to GitHub...")
             upload_to_github(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME, IMAGE_PATH_IN_REPO, local_image_filename, COMMIT_MESSAGE)
-         else:
-            print("\nSkipping GitHub upload due to missing configuration.")
-    else:
-        print(f"\nLocal image file {local_image_filename} was not created. Skipping GitHub upload.")
+         else: print("\nSkipping GitHub upload due to missing configuration.")
+    else: print(f"\nLocal image file {local_image_filename} was not created. Skipping GitHub upload.")
     print("\nScript finished.")
