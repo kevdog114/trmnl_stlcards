@@ -59,22 +59,22 @@ TEXT_COLOR = "black"
 try:
     FONT_PATH_REGULAR = "arial.ttf"
     FONT_PATH_BOLD = "arialbd.ttf"
-    # Increased font sizes
-    FONT_SIZE_LARGE = 32
-    FONT_SIZE_MEDIUM = 24
-    FONT_SIZE_SMALL = 20
+    # Further Increased font sizes
+    FONT_SIZE_LARGE = 38
+    FONT_SIZE_MEDIUM = 28 
+    FONT_SIZE_SMALL = 22
 except IOError:
     print(f"Font file {FONT_PATH_REGULAR} or {FONT_PATH_BOLD} not found. Please provide a valid .ttf font path.")
     FONT_PATH_REGULAR = None
     FONT_PATH_BOLD = None
     # Fallback sizes if custom fonts not found
-    FONT_SIZE_LARGE = 30 
-    FONT_SIZE_MEDIUM = 22
-    FONT_SIZE_SMALL = 18
+    FONT_SIZE_LARGE = 34
+    FONT_SIZE_MEDIUM = 26
+    FONT_SIZE_SMALL = 20
 
 
 LOGO_URL = "https://a.espncdn.com/i/teamlogos/mlb/500/stl.png"
-LOGO_SIZE = (120, 120)
+LOGO_SIZE = (130, 130) # Slightly larger logo
 
 # --- HELPER FUNCTIONS ---
 def get_team_logo(url, size):
@@ -133,7 +133,7 @@ def format_game_time(game_date_utc_str, target_tz_str):
 
 def get_simplified_broadcasts(game_data_item):
     """Extracts key TV broadcast information from a hydrated game object.
-       Returns a list of broadcast strings.
+       Excludes AM/FM radio. Returns a list of broadcast strings.
     """
     all_broadcast_items = []
     if 'broadcasts' in game_data_item and isinstance(game_data_item['broadcasts'], list):
@@ -145,11 +145,12 @@ def get_simplified_broadcasts(game_data_item):
         for epg_group in game_data_item['content']['media']['epg']:
             epg_title_raw = epg_group.get('title', '')
             epg_title = epg_title_raw.upper() if isinstance(epg_title_raw, str) else ''
+            # Include items from EPG if title suggests TV or MLBTV, but still filter by type later
             if epg_title in ["MLBTV", "TV"] and isinstance(epg_group.get('items'), list):
                 all_broadcast_items.extend(epg_group['items'])
 
     if not all_broadcast_items:
-        return ["TBD"] # Return list with TBD
+        return ["TBD"] 
 
     has_mlbtv_type = False
     national_tv = set()
@@ -161,41 +162,48 @@ def get_simplified_broadcasts(game_data_item):
         b_type_raw = broadcast.get('type', '')
         b_type = b_type_raw.upper() if isinstance(b_type_raw, str) else ''
         
+        # --- EXCLUDE AM/FM RADIO ---
+        if b_type in ["AM", "FM"]:
+            continue
+
         name_raw = broadcast.get('name', broadcast.get('description', ''))
         name = name_raw if isinstance(name_raw, str) else ''
 
         media_state_raw = broadcast.get('mediaState', '')
         media_state = media_state_raw.upper() if isinstance(media_state_raw, str) else ''
         
-        is_tv_broadcast = (b_type == "TV")
+        # Consider it a TV broadcast if type is TV, or if it's a known RSN/National name
+        # Or if type is empty but name suggests TV
+        is_tv_broadcast = (b_type == "TV" or (not b_type and name))
+
 
         if "MLB.TV" in name or b_type == "MLBTV" or ("MLBTV" in media_state):
             has_mlbtv_type = True
-            continue # MLB.TV will be handled at the end
+            continue 
 
         if broadcast.get('isNational') or name in ["ESPN", "FOX", "FS1", "TBS", "Apple TV+", "Peacock", "MLB Network"]:
             if name: national_tv.add(name)
-        elif is_tv_broadcast or name: # Assumed regional if TV and not explicitly national
-            if b_type not in ["AM", "FM"]:
-                call_sign_raw = broadcast.get('callSign', '')
-                call_sign = call_sign_raw if isinstance(call_sign_raw, str) else ''
-                if call_sign and call_sign not in name and len(call_sign) < 7: # Shorter call signs
-                    regional_tv.add(call_sign)
-                elif name:
-                    regional_tv.add(name)
+        elif is_tv_broadcast or name: 
+            call_sign_raw = broadcast.get('callSign', '')
+            call_sign = call_sign_raw if isinstance(call_sign_raw, str) else ''
+            # Prefer shorter call signs for RSNs, or full name if call sign is generic/long
+            if call_sign and call_sign not in name and len(call_sign) < 7 and len(call_sign) > 2 :
+                regional_tv.add(call_sign)
+            elif name: # Use name if call_sign is not suitable
+                regional_tv.add(name)
     
     display_list = []
     if national_tv:
         display_list.extend(sorted(list(national_tv)))
     
     if regional_tv:
-        allowed_regional_count = max(0, 2 - len(display_list)) 
+        allowed_regional_count = max(0, 3 - len(display_list)) # Allow up to 3 total channels
         if allowed_regional_count > 0:
             display_list.extend(sorted(list(regional_tv))[:allowed_regional_count])
 
     if has_mlbtv_type:
         is_mlb_network_listed = any("MLB Network" in s for s in display_list)
-        if not is_mlb_network_listed:
+        if not is_mlb_network_listed: 
             if not display_list: 
                 display_list.append("MLB.TV")
             elif len(display_list) < 3: 
@@ -212,7 +220,7 @@ def fetch_cardinals_data(team_id, num_days):
     games_info = []
     standings_info = {"record": "N/A", "rank": "N/A", "gb": "N/A"}
     start_date_dt = datetime.now()
-    end_date_dt = start_date_dt + timedelta(days=num_days -1)
+    end_date_dt = start_date_dt + timedelta(days=num_days -1) # num_days includes today
     start_date_str = start_date_dt.strftime('%Y-%m-%d')
     end_date_str = end_date_dt.strftime('%Y-%m-%d')
     
@@ -226,8 +234,6 @@ def fetch_cardinals_data(team_id, num_days):
 
         if not schedule_response or 'dates' not in schedule_response:
             print("No schedule data returned or unexpected format from statsapi.get('schedule').")
-            # Fallback removed as per user request
-            # If the primary fetch fails, games_info will remain empty for the schedule part.
         else:
             processed_games_count = 0
             for date_obj in schedule_response.get('dates', []):
@@ -341,52 +347,83 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
         font_large = ImageFont.load_default(); font_medium = ImageFont.load_default(); 
         font_small = ImageFont.load_default(); font_small_bold = ImageFont.load_default()
     
-    left_pane_width = LOGO_SIZE[0] + 40
-    if logo_obj: img.paste(logo_obj, (20, 20))
-    y_pos = LOGO_SIZE[1] + 40
-    draw.text((20, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 5 
-    draw.text((20, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 5
-    draw.text((20, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR); y_pos += FONT_SIZE_SMALL + 5
-    draw.text((20, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
+    # Left Pane (Logo and Standings)
+    logo_x_padding = 20
+    logo_y_padding = 20
+    left_pane_width = LOGO_SIZE[0] + logo_x_padding * 2 
+    
+    if logo_obj: img.paste(logo_obj, (logo_x_padding, logo_y_padding))
+    
+    y_pos = logo_y_padding + LOGO_SIZE[1] + 20 # Start below logo
+    standings_x = logo_x_padding
 
-    right_pane_x_start = left_pane_width + 20; y_pos = 20
-    draw.text((right_pane_x_start, y_pos), "Upcoming Games:", font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 20 
+    draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
+    y_pos += FONT_SIZE_MEDIUM + 10
+    draw.text((standings_x, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR)
+    y_pos += FONT_SIZE_MEDIUM + 10
+    draw.text((standings_x, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR)
+    y_pos += FONT_SIZE_SMALL + 10
+    draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
+
+    # Right Pane (Upcoming Games)
+    right_pane_x_start = left_pane_width + 15 # Gap between panes
+    y_pos = logo_y_padding # Align top with logo
+    
+    title_text = "Upcoming Games:"
+    draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
+    y_pos += FONT_SIZE_LARGE + 25 
 
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
+        # Limit to 3 games to ensure fit with larger fonts and multi-line TV
+        games_to_display = 3 
         for i, game in enumerate(games):
-            if i >= 4 : break 
+            if i >= games_to_display : break 
             
             opponent_text = game.get("opponent", "N/A"); 
             datetime_text = game.get("datetime", "N/A")
             broadcast_list = game.get("broadcast", ["TBD"]) 
 
+            # Estimate height for this game entry
+            num_tv_lines = len(broadcast_list) if broadcast_list else 1
+            estimated_height = FONT_SIZE_MEDIUM + 10 + FONT_SIZE_SMALL + 10 + (FONT_SIZE_SMALL + 5) * num_tv_lines + 25 # Game block padding
+            if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding: # Check against bottom margin
+                print(f"Not enough vertical space for game {i+1}, stopping game display.")
+                break
+
             draw.text((right_pane_x_start, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_MEDIUM + 7 
+            y_pos += FONT_SIZE_MEDIUM + 8
 
             draw.text((right_pane_x_start + 10, y_pos), datetime_text, font=font_small, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_SMALL + 7 
+            y_pos += FONT_SIZE_SMALL + 8
             
             if broadcast_list:
-                first_b_line = f"TV: {broadcast_list[0]}"
-                draw.text((right_pane_x_start + 10, y_pos), first_b_line, font=font_small_bold, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 3 
+                # Draw "TV:" label once
+                tv_label_y = y_pos
+                draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
+                
+                # Start drawing channels to the right of "TV:"
+                channel_x_start = right_pane_x_start + 10 + draw.textlength("TV:  ", font=font_small_bold) # Get width of "TV: "
+                
+                for k, channel in enumerate(broadcast_list):
+                    if k > 0: # For second line onwards, y_pos is already advanced
+                         y_pos += FONT_SIZE_SMALL + 4 # Line height for subsequent items
+                    
+                    if y_pos > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 5) : break 
+                    draw.text((channel_x_start, tv_label_y if k == 0 else y_pos), channel, font=font_small, fill=TEXT_COLOR)
+                
+                if len(broadcast_list) > 0: # Advance y_pos based on the last drawn channel line
+                    y_pos = (tv_label_y if len(broadcast_list) == 1 else y_pos) + (FONT_SIZE_SMALL + 5 if len(broadcast_list) ==1 else 0)
+                else: # No channels, just advance past "TV:"
+                    y_pos = tv_label_y + FONT_SIZE_SMALL + 5
 
-                indent_x = right_pane_x_start + 10 + 15 
-                for k in range(1, len(broadcast_list)):
-                    if y_pos > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 10) : break 
-                    draw.text((indent_x, y_pos), broadcast_list[k], font=font_small, fill=TEXT_COLOR)
-                    y_pos += FONT_SIZE_SMALL + 3 
             else: 
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
                 y_pos += FONT_SIZE_SMALL + 5
 
-            y_pos += 12 
-            if y_pos > IMAGE_HEIGHT - (FONT_SIZE_MEDIUM + FONT_SIZE_SMALL*2 + 20) : 
-                break 
-                
+            y_pos += 20 # Increased gap between game entries
+            
     eink_image = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
     eink_image.save(output_filename); print(f"Image saved as {output_filename}")
 
