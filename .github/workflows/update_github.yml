@@ -30,8 +30,11 @@ jobs:
       - name: Install OS dependencies (fonts)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ttf-mscorefonts-installer fontconfig
+          # Install Liberation fonts (metrically compatible with Arial, Times New Roman, Courier New)
+          sudo apt-get install -y fonts-liberation2 fontconfig
           sudo fc-cache -fv # Refresh font cache
+          echo "Verifying font installation (listing liberation fonts):"
+          ls -l /usr/share/fonts/truetype/liberation2 || echo "Liberation fonts not found in expected directory."
 
       - name: Install Python dependencies
         run: |

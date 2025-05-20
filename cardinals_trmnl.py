@@ -57,24 +57,40 @@ IMAGE_HEIGHT = 480
 BACKGROUND_COLOR = "white"
 TEXT_COLOR = "black"
 try:
-    FONT_PATH_REGULAR = "arial.ttf"
-    FONT_PATH_BOLD = "arialbd.ttf"
-    # Further Increased font sizes
+    # Using Liberation fonts - filenames might vary slightly based on the system/package
+    # Pillow should find them if they are in standard font directories after fc-cache
+    FONT_PATH_REGULAR = "LiberationSans-Regular.ttf" 
+    FONT_PATH_BOLD = "LiberationSans-Bold.ttf"
+    # Attempt to load them to see if they are found by name
+    ImageFont.truetype(FONT_PATH_REGULAR, 10) 
+    ImageFont.truetype(FONT_PATH_BOLD, 10)
+    print(f"Attempting to use Liberation fonts by name: {FONT_PATH_REGULAR}, {FONT_PATH_BOLD}")
+
     FONT_SIZE_LARGE = 38
     FONT_SIZE_MEDIUM = 28 
     FONT_SIZE_SMALL = 22
 except IOError:
-    print(f"Font file {FONT_PATH_REGULAR} or {FONT_PATH_BOLD} not found. Please provide a valid .ttf font path.")
-    FONT_PATH_REGULAR = None
-    FONT_PATH_BOLD = None
-    # Fallback sizes if custom fonts not found
+    print(f"Specified Liberation font files not found by name. Trying common full paths or defaulting.")
+    # Fallback to trying full paths if direct name doesn't work
+    try:
+        FONT_PATH_REGULAR = "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"
+        FONT_PATH_BOLD = "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"
+        ImageFont.truetype(FONT_PATH_REGULAR, 10)
+        ImageFont.truetype(FONT_PATH_BOLD, 10)
+        print(f"Using full paths for Liberation fonts: {FONT_PATH_REGULAR}, {FONT_PATH_BOLD}")
+    except IOError:
+        print(f"Full paths for Liberation fonts also not found. Defaulting to Pillow's load_default() font.")
+        FONT_PATH_REGULAR = None # Will cause Pillow to use its default
+        FONT_PATH_BOLD = None    # Will cause Pillow to use its default
+
+    # Fallback sizes if custom fonts not found or fail to load
     FONT_SIZE_LARGE = 34
     FONT_SIZE_MEDIUM = 26
     FONT_SIZE_SMALL = 20
 
 
 LOGO_URL = "https://a.espncdn.com/i/teamlogos/mlb/500/stl.png"
-LOGO_SIZE = (130, 130) # Slightly larger logo
+LOGO_SIZE = (130, 130) 
 
 # --- HELPER FUNCTIONS ---
 def get_team_logo(url, size):
@@ -145,7 +161,6 @@ def get_simplified_broadcasts(game_data_item):
         for epg_group in game_data_item['content']['media']['epg']:
             epg_title_raw = epg_group.get('title', '')
             epg_title = epg_title_raw.upper() if isinstance(epg_title_raw, str) else ''
-            # Include items from EPG if title suggests TV or MLBTV, but still filter by type later
             if epg_title in ["MLBTV", "TV"] and isinstance(epg_group.get('items'), list):
                 all_broadcast_items.extend(epg_group['items'])
 
@@ -162,7 +177,6 @@ def get_simplified_broadcasts(game_data_item):
         b_type_raw = broadcast.get('type', '')
         b_type = b_type_raw.upper() if isinstance(b_type_raw, str) else ''
         
-        # --- EXCLUDE AM/FM RADIO ---
         if b_type in ["AM", "FM"]:
             continue
 
@@ -172,8 +186,6 @@ def get_simplified_broadcasts(game_data_item):
         media_state_raw = broadcast.get('mediaState', '')
         media_state = media_state_raw.upper() if isinstance(media_state_raw, str) else ''
         
-        # Consider it a TV broadcast if type is TV, or if it's a known RSN/National name
-        # Or if type is empty but name suggests TV
         is_tv_broadcast = (b_type == "TV" or (not b_type and name))
 
 
@@ -186,10 +198,9 @@ def get_simplified_broadcasts(game_data_item):
         elif is_tv_broadcast or name: 
             call_sign_raw = broadcast.get('callSign', '')
             call_sign = call_sign_raw if isinstance(call_sign_raw, str) else ''
-            # Prefer shorter call signs for RSNs, or full name if call sign is generic/long
             if call_sign and call_sign not in name and len(call_sign) < 7 and len(call_sign) > 2 :
                 regional_tv.add(call_sign)
-            elif name: # Use name if call_sign is not suitable
+            elif name: 
                 regional_tv.add(name)
     
     display_list = []
@@ -197,7 +208,7 @@ def get_simplified_broadcasts(game_data_item):
         display_list.extend(sorted(list(national_tv)))
     
     if regional_tv:
-        allowed_regional_count = max(0, 3 - len(display_list)) # Allow up to 3 total channels
+        allowed_regional_count = max(0, 3 - len(display_list)) 
         if allowed_regional_count > 0:
             display_list.extend(sorted(list(regional_tv))[:allowed_regional_count])
 
@@ -220,7 +231,7 @@ def fetch_cardinals_data(team_id, num_days):
     games_info = []
     standings_info = {"record": "N/A", "rank": "N/A", "gb": "N/A"}
     start_date_dt = datetime.now()
-    end_date_dt = start_date_dt + timedelta(days=num_days -1) # num_days includes today
+    end_date_dt = start_date_dt + timedelta(days=num_days -1) 
     start_date_str = start_date_dt.strftime('%Y-%m-%d')
     end_date_str = end_date_dt.strftime('%Y-%m-%d')
     
@@ -338,14 +349,21 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     draw = ImageDraw.Draw(img)
     font_large, font_medium, font_small, font_small_bold = None, None, None, None
     try:
-        font_large = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_LARGE) if FONT_PATH_BOLD else ImageFont.load_default()
-        font_medium = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_MEDIUM) if FONT_PATH_REGULAR else ImageFont.load_default()
-        font_small = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_SMALL) if FONT_PATH_REGULAR else ImageFont.load_default()
-        font_small_bold = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_SMALL) if FONT_PATH_BOLD else font_small 
-    except IOError:
-        print("One or more font files not found. Defaulting to Pillow's load_default() font.")
-        font_large = ImageFont.load_default(); font_medium = ImageFont.load_default(); 
-        font_small = ImageFont.load_default(); font_small_bold = ImageFont.load_default()
+        # Try loading by specific name first (Pillow often finds system fonts this way)
+        if FONT_PATH_REGULAR and FONT_PATH_BOLD:
+            font_large = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_LARGE)
+            font_medium = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_MEDIUM)
+            font_small = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_SMALL)
+            font_small_bold = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_SMALL)
+            print(f"Successfully loaded fonts by name: {FONT_PATH_BOLD}, {FONT_PATH_REGULAR}")
+        else: 
+            raise IOError("Font paths were None, attempting Pillow default.")
+    except IOError: 
+        print("Specified font files not found or paths were None. Defaulting to Pillow's load_default() font.")
+        font_large = ImageFont.load_default() 
+        font_medium = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+        font_small_bold = ImageFont.load_default() 
     
     # Left Pane (Logo and Standings)
     logo_x_padding = 20
@@ -354,7 +372,7 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     
     if logo_obj: img.paste(logo_obj, (logo_x_padding, logo_y_padding))
     
-    y_pos = logo_y_padding + LOGO_SIZE[1] + 20 # Start below logo
+    y_pos = logo_y_padding + LOGO_SIZE[1] + 20 
     standings_x = logo_x_padding
 
     draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
@@ -366,8 +384,8 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
 
     # Right Pane (Upcoming Games)
-    right_pane_x_start = left_pane_width + 15 # Gap between panes
-    y_pos = logo_y_padding # Align top with logo
+    right_pane_x_start = left_pane_width + 15 
+    y_pos = logo_y_padding 
     
     title_text = "Upcoming Games:"
     draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
@@ -376,7 +394,6 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
-        # Limit to 3 games to ensure fit with larger fonts and multi-line TV
         games_to_display = 3 
         for i, game in enumerate(games):
             if i >= games_to_display : break 
@@ -385,10 +402,9 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             datetime_text = game.get("datetime", "N/A")
             broadcast_list = game.get("broadcast", ["TBD"]) 
 
-            # Estimate height for this game entry
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            estimated_height = FONT_SIZE_MEDIUM + 10 + FONT_SIZE_SMALL + 10 + (FONT_SIZE_SMALL + 5) * num_tv_lines + 25 # Game block padding
-            if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding: # Check against bottom margin
+            estimated_height = FONT_SIZE_MEDIUM + 10 + FONT_SIZE_SMALL + 10 + (FONT_SIZE_SMALL + 5) * num_tv_lines + 25 
+            if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding: 
                 print(f"Not enough vertical space for game {i+1}, stopping game display.")
                 break
 
@@ -399,30 +415,25 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             y_pos += FONT_SIZE_SMALL + 8
             
             if broadcast_list:
-                # Draw "TV:" label once
                 tv_label_y = y_pos
                 draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
                 
-                # Start drawing channels to the right of "TV:"
-                channel_x_start = right_pane_x_start + 10 + draw.textlength("TV:  ", font=font_small_bold) # Get width of "TV: "
+                channel_x_start = right_pane_x_start + 10 + draw.textlength("TV:  ", font=font_small_bold) 
                 
+                current_line_y = tv_label_y
                 for k, channel in enumerate(broadcast_list):
-                    if k > 0: # For second line onwards, y_pos is already advanced
-                         y_pos += FONT_SIZE_SMALL + 4 # Line height for subsequent items
+                    if k > 0: 
+                         current_line_y += FONT_SIZE_SMALL + 4 
                     
-                    if y_pos > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 5) : break 
-                    draw.text((channel_x_start, tv_label_y if k == 0 else y_pos), channel, font=font_small, fill=TEXT_COLOR)
+                    if current_line_y > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 5) : break 
+                    draw.text((channel_x_start, current_line_y), channel, font=font_small, fill=TEXT_COLOR)
                 
-                if len(broadcast_list) > 0: # Advance y_pos based on the last drawn channel line
-                    y_pos = (tv_label_y if len(broadcast_list) == 1 else y_pos) + (FONT_SIZE_SMALL + 5 if len(broadcast_list) ==1 else 0)
-                else: # No channels, just advance past "TV:"
-                    y_pos = tv_label_y + FONT_SIZE_SMALL + 5
-
+                y_pos = current_line_y + FONT_SIZE_SMALL + 5 
             else: 
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
                 y_pos += FONT_SIZE_SMALL + 5
 
-            y_pos += 20 # Increased gap between game entries
+            y_pos += 20 
             
     eink_image = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
     eink_image.save(output_filename); print(f"Image saved as {output_filename}")
