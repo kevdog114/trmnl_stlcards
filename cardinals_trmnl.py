@@ -153,12 +153,12 @@ def get_simplified_broadcasts(game_data_item):
     for broadcast in all_broadcast_items:
         b_type = broadcast.get('type', '').upper() # e.g., TV, HOME, AWAY, MLBTV
         name = broadcast.get('name', broadcast.get('description', '')) # 'name' or 'description'
-        media_state = broadcast.get('mediaState', '') # Helpful for MLB.TV items
+        #media_state = broadcast.get('mediaState', '') # Helpful for MLB.TV items
         
         # Consider it a TV broadcast if type is TV, or if it's a known RSN/National name
         is_tv_broadcast = (b_type == "TV")
 
-        if "MLB.TV" in name or b_type == "MLBTV" or (media_state and "MLBTV" in media_state.upper()):
+        if "MLB.TV" in name or b_type == "MLBTV":
             has_mlbtv_type = True
             continue # Handle MLB.TV separately at the end
 
