@@ -66,9 +66,10 @@ try:
     ImageFont.truetype(FONT_PATH_BOLD, 10)
     print(f"Attempting to use Liberation fonts by name: {FONT_PATH_REGULAR}, {FONT_PATH_BOLD}")
 
-    FONT_SIZE_LARGE = 38
-    FONT_SIZE_MEDIUM = 28 
-    FONT_SIZE_SMALL = 22
+    # Reduced font sizes
+    FONT_SIZE_LARGE = 30
+    FONT_SIZE_MEDIUM = 22 
+    FONT_SIZE_SMALL = 18
 except IOError:
     print(f"Specified Liberation font files not found by name. Trying common full paths or defaulting.")
     # Fallback to trying full paths if direct name doesn't work
@@ -83,10 +84,10 @@ except IOError:
         FONT_PATH_REGULAR = None # Will cause Pillow to use its default
         FONT_PATH_BOLD = None    # Will cause Pillow to use its default
 
-    # Fallback sizes if custom fonts not found or fail to load
-    FONT_SIZE_LARGE = 34
-    FONT_SIZE_MEDIUM = 26
-    FONT_SIZE_SMALL = 20
+    # Reduced fallback sizes if custom fonts not found or fail to load
+    FONT_SIZE_LARGE = 28
+    FONT_SIZE_MEDIUM = 20
+    FONT_SIZE_SMALL = 16
 
 
 LOGO_URL = "https://a.espncdn.com/i/teamlogos/mlb/500/stl.png"
@@ -376,20 +377,20 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     standings_x = logo_x_padding
 
     draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_MEDIUM + 10
+    y_pos += FONT_SIZE_MEDIUM + 8 # Adjusted spacing
     draw.text((standings_x, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_MEDIUM + 10
+    y_pos += FONT_SIZE_MEDIUM + 8 # Adjusted spacing
     draw.text((standings_x, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_SMALL + 10
+    y_pos += FONT_SIZE_SMALL + 8  # Adjusted spacing
     draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
 
     # Right Pane (Upcoming Games)
-    right_pane_x_start = left_pane_width + 15 
+    right_pane_x_start = left_pane_width + 20 # Adjusted gap
     y_pos = logo_y_padding 
     
     title_text = "Upcoming Games:"
     draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 25 
+    y_pos += FONT_SIZE_LARGE + 20 # Adjusted spacing
 
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
@@ -403,16 +404,16 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             broadcast_list = game.get("broadcast", ["TBD"]) 
 
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            estimated_height = FONT_SIZE_MEDIUM + 10 + FONT_SIZE_SMALL + 10 + (FONT_SIZE_SMALL + 5) * num_tv_lines + 25 
+            estimated_height = FONT_SIZE_MEDIUM + 8 + FONT_SIZE_SMALL + 8 + (FONT_SIZE_SMALL + 4) * num_tv_lines + 15 # Adjusted estimation
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding: 
                 print(f"Not enough vertical space for game {i+1}, stopping game display.")
                 break
 
             draw.text((right_pane_x_start, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_MEDIUM + 8
+            y_pos += FONT_SIZE_MEDIUM + 6 # Adjusted spacing
 
             draw.text((right_pane_x_start + 10, y_pos), datetime_text, font=font_small, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_SMALL + 8
+            y_pos += FONT_SIZE_SMALL + 6 # Adjusted spacing
             
             if broadcast_list:
                 tv_label_y = y_pos
@@ -423,17 +424,17 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
                 current_line_y = tv_label_y
                 for k, channel in enumerate(broadcast_list):
                     if k > 0: 
-                         current_line_y += FONT_SIZE_SMALL + 4 
+                         current_line_y += FONT_SIZE_SMALL + 3 # Adjusted spacing
                     
                     if current_line_y > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 5) : break 
                     draw.text((channel_x_start, current_line_y), channel, font=font_small, fill=TEXT_COLOR)
                 
-                y_pos = current_line_y + FONT_SIZE_SMALL + 5 
+                y_pos = current_line_y + FONT_SIZE_SMALL + 3 # Adjusted spacing
             else: 
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 5
+                y_pos += FONT_SIZE_SMALL + 3 # Adjusted spacing
 
-            y_pos += 20 
+            y_pos += 15 # Adjusted gap between game entries
             
     eink_image = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
     eink_image.save(output_filename); print(f"Image saved as {output_filename}")
