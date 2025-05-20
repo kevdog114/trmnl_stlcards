@@ -292,7 +292,7 @@ def fetch_cardinals_data(team_id, num_days):
     # Fetch Standings (remains the same)
     print("Fetching standings...")
     try:
-        standings_raw = statsapi.standings_data(leagueId="103,104", division="all", include_wildcard=True, season=datetime.now().year)
+        standings_raw = statsapi.standings_data(leagueId="104", division="all", include_wildcard=True, season=datetime.now().year)
         found_team = False
         for league_id, league_data in standings_raw.items():
             if found_team: break
