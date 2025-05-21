@@ -422,7 +422,8 @@ if __name__ == "__main__":
 
         redirect_json_content = {
             "url": static_image_url,
-            "filename": dynamic_filename_for_json
+            "filename": dynamic_filename_for_json,
+            "refresh_rate": 3600
         }
         json_string = json.dumps(redirect_json_content, indent=2)
         
