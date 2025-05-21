@@ -415,10 +415,7 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             # Construct combined opponent and location string
             location_info = ""
             if game_type_text:
-                location_info += f" ({game_type_text}"
-                if stadium_text and stadium_text != "Stadium TBD":
-                    location_info += f" at {stadium_text}"
-                location_info += ")"
+                location_info += f" ({game_type_text})"
             
             combined_opponent_loc_text = f"{opponent_full_text}{location_info}"
             
