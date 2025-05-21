@@ -1,23 +1,28 @@
 # .github/workflows/update_cardinals_schedule.yml
 
-name: Update Cardinals Schedule Image
+name: Update Cardinals Schedule Image and Pages
 
 on:
   schedule:
     # Runs every day at 7:00 AM UTC (adjust as needed)
-    # Use crontab guru to help: https://crontab.guru/
-    - cron: '0 7 * * *'
+    # Example: '0 7 * * *' for 7 AM UTC daily
+    # Example: '0 */6 * * *' for every 6 hours
+    - cron: '0 12 * * *' # Runs at 12:00 PM UTC daily
   workflow_dispatch: # Allows manual triggering from the Actions tab
   push:
     branches:
-      - main # Or your default branch, e.g., master. Runs on push for testing.
+      - main # Or your default branch, e.g., master.
 
 jobs:
-  update_image:
+  build_and_deploy:
     runs-on: ubuntu-latest
+    # These permissions are needed for the actions/checkout to commit
+    # and for actions/deploy-pages to deploy to Pages.
     permissions:
-      contents: write # Required to push changes to the repository (the image)
-      
+      contents: write # To commit changes to the repo
+      pages: write    # To deploy to GitHub Pages
+      id-token: write # To authenticate with GitHub Pages
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,18 +47,46 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         # This assumes your requirements.txt is in the root of your repository
 
-      - name: Run script to update image and upload to GitHub
-        env:
-          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-        run: python cardinals_trmnl.py # Replace with your Python script's filename if different
+      - name: Run Python script to generate image and JSON
+        # The Python script should save cardinals_schedule.png to trmnl_images/
+        # and trmnl_redirect.json to the root of the repository.
+        # It uses GITHUB_REPOSITORY_OWNER and GITHUB_REPOSITORY (split) for URL construction.
+        run: python cardinals_trmnl.py # Ensure this is the correct name of your Python script
 
-      - name: Verify image was created (optional check)
+      - name: Commit and push generated files
         run: |
-          if [ -f cardinals_schedule_eink.png ]; then
-            echo "Image cardinals_schedule_eink.png found."
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # Add both the image and the JSON file.
+          # These paths must match where your Python script saves the files locally.
+          git add trmnl_images/cardinals_schedule.png 
+          git add trmnl_redirect.json
+          
+          # Check if there are changes to commit
+          # git diff --staged --quiet exits with 0 if no changes, 1 if changes
+          if ! git diff --staged --quiet; then
+            git commit -m "Automated Cardinals schedule update (image and JSON)"
+            git push
+            echo "Changes committed and pushed."
           else
-            echo "Image cardinals_schedule_eink.png NOT found after script execution."
-            # exit 1 # Optionally fail the job if the image isn't created
+            echo "No changes to commit."
           fi
           
-      # The Python script itself handles committing and pushing the image.
+      - name: Setup Pages
+        # This action is used to configure the GitHub Pages deployment
+        # It prepares the environment for the artifact upload and deployment steps.
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        # This action uploads the content that will be deployed to GitHub Pages.
+        # The path should point to the directory that GitHub Pages should serve.
+        # If trmnl_redirect.json is at the root of your repo, path: '.' is correct.
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.' 
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        # This action deploys the artifact uploaded in the previous step to GitHub Pages.
+        uses: actions/deploy-pages@v4

@@ -4,49 +4,24 @@ import requests
 from io import BytesIO
 from datetime import datetime, timedelta
 import pytz # For timezone conversion
-from github import Github
-from github.GithubException import UnknownObjectException
+# from github import Github # No longer needed for direct upload from script
+# from github.GithubException import UnknownObjectException # No longer needed
 import os
 import traceback # For more detailed error logging
 import json # Added for JSON manipulation
 
 # --- CONFIGURATION ---
-# GitHub Configuration
-GITHUB_TOKEN = os.environ.get("GITHUB_PAT")
+# GitHub repository details (used for constructing URLs in JSON, not for direct upload by this script)
+# These will be implicitly handled by the GitHub Actions workflow for commits.
+GITHUB_REPO_OWNER = os.environ.get("GITHUB_REPOSITORY_OWNER", "YOUR_GITHUB_USERNAME") # GITHUB_REPOSITORY_OWNER is auto-set by Actions
+GITHUB_REPO_NAME = os.environ.get("GITHUB_REPOSITORY", "YOUR_REPOSITORY_NAME").split('/')[-1] if os.environ.get("GITHUB_REPOSITORY") else "YOUR_REPOSITORY_NAME"
 
-github_repository_env = os.environ.get("GITHUB_REPOSITORY") # Format: 'owner/repo'
-if github_repository_env:
-    parts = github_repository_env.split('/')
-    if len(parts) == 2:
-        GITHUB_REPO_OWNER_ENV = parts[0]
-        GITHUB_REPO_NAME_ENV = parts[1]
-        print(f"Detected GitHub Actions environment: Owner='{GITHUB_REPO_OWNER_ENV}', Repo='{GITHUB_REPO_NAME_ENV}'")
-    else:
-        GITHUB_REPO_OWNER_ENV = None
-        GITHUB_REPO_NAME_ENV = None
-        print(f"Warning: GITHUB_REPOSITORY environment variable format is unexpected: {github_repository_env}")
-else:
-    GITHUB_REPO_OWNER_ENV = None
-    GITHUB_REPO_NAME_ENV = None
-    print("Not running in a GitHub Actions environment or GITHUB_REPOSITORY not set.")
 
-GITHUB_REPO_OWNER_HARDCODED = "YOUR_GITHUB_USERNAME"
-GITHUB_REPO_NAME_HARDCODED = "YOUR_REPOSITORY_NAME"
+IMAGE_PATH_IN_REPO = "trmnl_images/cardinals_schedule.png" # Path in the repo where image will be
+LOCAL_IMAGE_FULL_PATH = IMAGE_PATH_IN_REPO # Python script will save it here locally
 
-if GITHUB_REPO_OWNER_HARDCODED == "YOUR_GITHUB_USERNAME" and GITHUB_REPO_OWNER_ENV:
-    GITHUB_REPO_OWNER = GITHUB_REPO_OWNER_ENV
-else:
-    GITHUB_REPO_OWNER = GITHUB_REPO_OWNER_HARDCODED
-
-if GITHUB_REPO_NAME_HARDCODED == "YOUR_REPOSITORY_NAME" and GITHUB_REPO_NAME_ENV:
-    GITHUB_REPO_NAME = GITHUB_REPO_NAME_ENV
-else:
-    GITHUB_REPO_NAME = GITHUB_REPO_NAME_HARDCODED
-
-IMAGE_PATH_IN_REPO = "trmnl_images/cardinals_schedule.png"
-JSON_REDIRECT_PATH_IN_REPO = "trmnl_redirect.json" # Path for the redirect JSON in the repo
-COMMIT_MESSAGE_IMAGE = "Update St. Louis Cardinals TRMNL schedule image"
-COMMIT_MESSAGE_JSON = "Update TRMNL redirect JSON for Cardinals schedule"
+JSON_REDIRECT_FILENAME = "trmnl_redirect.json" # Local filename for the JSON
+JSON_REDIRECT_PATH_IN_REPO = JSON_REDIRECT_FILENAME # Path in the repo for the JSON (e.g., root for Pages)
 
 
 # MLB Configuration
@@ -237,11 +212,13 @@ def fetch_cardinals_data(team_id, num_days):
                     if not game_datetime_utc_str and isinstance(date_obj, dict): 
                         game_datetime_utc_str = date_obj.get('date')
                     formatted_time = format_game_time(game_datetime_utc_str, DISPLAY_TIMEZONE)
-                    stadium_name = game_data.get('venue', {}).get('name', 'Stadium TBD')
+                    # Stadium name is fetched but not used in image per user request
+                    # stadium_name = game_data.get('venue', {}).get('name', 'Stadium TBD') 
                     games_info.append({
                         "opponent_full": opponent_name_full, 
                         "datetime": formatted_time, "broadcast": broadcast_str_list, 
-                        "status": game_status, "game_type": game_type, "stadium": stadium_name   
+                        "status": game_status, "game_type": game_type 
+                        # "stadium": stadium_name # No longer needed for image
                     })
                     processed_games_count += 1
                 if processed_games_count >= num_days: break
@@ -287,7 +264,7 @@ def fetch_cardinals_data(team_id, num_days):
     return games_info, standings_info
 
 # --- CREATE IMAGE ---
-def create_schedule_image(games, standings, logo_obj, output_filename="cardinals_schedule.png"):
+def create_schedule_image(games, standings, logo_obj, output_image_path):
     img = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(img)
     font_large, font_medium, font_small, font_small_bold, font_xsmall, font_medium_bold = None, None, None, None, None, None
@@ -314,21 +291,36 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     draw.text((right_pane_x_start, y_pos), "Upcoming Games:", font=font_large, fill=TEXT_COLOR); y_pos += FONT_SIZE_LARGE + 20
     if not games: draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
-        games_to_display = 3
+        games_to_display = 3 # Try to fit 3 games with the new layout
         for i, game in enumerate(games):
             if i >= games_to_display : break 
-            opponent_full_text, datetime_text, broadcast_list, game_type_text, stadium_text = game.get("opponent_full", "N/A"), game.get("datetime", "N/A"), game.get("broadcast", ["TBD"]), game.get("game_type", ""), game.get("stadium", "")
-            location_info = f" ({game_type_text})" if game_type_text and stadium_text and stadium_text != "Stadium TBD" else f" ({game_type_text})" if game_type_text else ""
-            combined_opponent_loc_text = f"{opponent_full_text}{location_info}"
+            opponent_full_text, datetime_text, broadcast_list, game_type_text = game.get("opponent_full", "N/A"), game.get("datetime", "N/A"), game.get("broadcast", ["TBD"]), game.get("game_type", "")
+            
+            # Construct opponent line with Home/Away status
+            opponent_display_text = opponent_full_text
+            if game_type_text:
+                opponent_display_text += f" ({game_type_text})"
+
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            estimated_height = FONT_SIZE_MEDIUM_BOLD + 8 + FONT_SIZE_MEDIUM + 8 + (FONT_SIZE_SMALL + 5) * num_tv_lines + 30 
+            estimated_height = (FONT_SIZE_MEDIUM_BOLD + 8 + # Date/Time
+                                FONT_SIZE_MEDIUM + 10 +    # Opponent + Home/Away
+                                (FONT_SIZE_SMALL + 5) * num_tv_lines + # TV Lines
+                                30) # Overall padding for game block
+                                
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding - FONT_SIZE_XSMALL - 10 : 
-                print(f"Not enough space for game {i+1}."); break
+                print(f"Not enough vertical space for game {i+1}."); 
+                if i < 1: draw.text((right_pane_x_start, y_pos), "Not enough space for game details.", font=font_small, fill=TEXT_COLOR)
+                break
+            
             draw.text((right_pane_x_start, y_pos), datetime_text, font=font_medium_bold, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM_BOLD + 8
+            
+            # Truncate opponent_display_text if necessary
             available_width_for_opponent = IMAGE_WIDTH - (right_pane_x_start + 10) - 10
-            current_opponent_loc_text = combined_opponent_loc_text
-            while draw.textlength(current_opponent_loc_text, font=font_medium) > available_width_for_opponent and len(current_opponent_loc_text) > 10: current_opponent_loc_text = current_opponent_loc_text[:-4] + "..."
-            draw.text((right_pane_x_start + 10, y_pos), current_opponent_loc_text, font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 8
+            current_opponent_display_text = opponent_display_text
+            while draw.textlength(current_opponent_display_text, font=font_medium) > available_width_for_opponent and len(current_opponent_display_text) > 10: 
+                current_opponent_display_text = current_opponent_display_text[:-4] + "..."
+            draw.text((right_pane_x_start + 10, y_pos), current_opponent_display_text, font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 10
+            
             if broadcast_list:
                 tv_label_y = y_pos; draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
                 channel_x_start = right_pane_x_start + 10 + draw.textlength("TV:  ", font=font_small_bold) 
@@ -344,92 +336,53 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     text_width = draw.textlength(refresh_date_str, font=font_xsmall)
     text_x = IMAGE_WIDTH - text_width - 15; text_y = IMAGE_HEIGHT - FONT_SIZE_XSMALL - 15 
     draw.text((text_x, text_y), refresh_date_str, font=font_xsmall, fill=TEXT_COLOR)
-    eink_image = img.convert("1", dither=Image.Dither.NONE); eink_image.save(output_filename); print(f"Image saved as {output_filename}")
-
-# --- UPLOAD CONTENT TO GITHUB ---
-def upload_content_to_github(token, repo_owner, repo_name, file_path_in_repo, content_bytes, commit_msg):
-    """Uploads bytes content (image or text encoded to bytes) to GitHub."""
-    if not token: print("GitHub token not provided. Skipping upload."); return
-    if not repo_owner or not repo_name or repo_owner == "YOUR_GITHUB_USERNAME" or repo_name == "YOUR_REPOSITORY_NAME":
-        print("GitHub repository owner or name not properly configured. Skipping upload."); return
-    try:
-        g = Github(token); repo = g.get_repo(f"{repo_owner}/{repo_name}")
-    except Exception as e: print(f"Error accessing GitHub repository {repo_owner}/{repo_name}: {e}"); return
-    try:
-        try:
-            existing_file = repo.get_contents(file_path_in_repo)
-            repo.update_file(path=file_path_in_repo, message=commit_msg, content=content_bytes, sha=existing_file.sha)
-            print(f"Successfully updated {file_path_in_repo} in {repo_owner}/{repo_name}")
-        except UnknownObjectException:
-            repo.create_file(path=file_path_in_repo, message=commit_msg, content=content_bytes)
-            print(f"Successfully created {file_path_in_repo} in {repo_owner}/{repo_name}")
-    except Exception as e: print(f"Error uploading file to GitHub: {e}"); traceback.print_exc()
+    eink_image = img.convert("1", dither=Image.Dither.NONE); 
+    os.makedirs(os.path.dirname(output_image_path), exist_ok=True)
+    eink_image.save(output_image_path); print(f"Image saved as {output_image_path}")
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    if not GITHUB_TOKEN or GITHUB_REPO_OWNER == "YOUR_GITHUB_USERNAME" or GITHUB_REPO_NAME == "YOUR_REPOSITORY_NAME":
-        print("WARNING: GitHub credentials are not fully set. Upload will be skipped unless configured.")
-
     print("Starting St. Louis Cardinals schedule image generation...")
     upcoming_games, current_standings = fetch_cardinals_data(TEAM_ID, DAYS_AHEAD)
-    
     print("\nFetched Games:")
     if upcoming_games:
         for game in upcoming_games: 
             broadcast_display = "/".join(game['broadcast']) if isinstance(game['broadcast'], list) else game['broadcast']
-            print(f"- {game.get('opponent_full','N/A')} ({game.get('game_type','?')}, {game.get('stadium','?')}) on {game['datetime']} (TV: {broadcast_display})")
+            # Updated print to show game_type, stadium is no longer in game dict for image
+            print(f"- {game.get('opponent_full','N/A')} ({game.get('game_type','?')}) on {game['datetime']} (TV: {broadcast_display})")
     else: print("No upcoming games data fetched.")
-    
     print("\nCurrent Standings:")
     print(f"- Record: {current_standings['record']}")
     print(f"- Rank: {current_standings['rank']}")
     print(f"- GB: {current_standings['gb']}")
-
     cardinals_logo = get_team_logo(LOGO_URL, LOGO_SIZE)
     if not cardinals_logo: print("Could not load logo. Proceeding without it.")
-    
-    local_image_filename = "cardinals_schedule_eink.png"
-    create_schedule_image(upcoming_games, current_standings, cardinals_logo, local_image_filename)
-
-    # Upload Image
-    if os.path.exists(local_image_filename):
-         if GITHUB_TOKEN and GITHUB_REPO_OWNER != "YOUR_GITHUB_USERNAME" and GITHUB_REPO_NAME != "YOUR_REPOSITORY_NAME":
-            print(f"\nUploading {local_image_filename} to GitHub...")
-            with open(local_image_filename, "rb") as f:
-                image_bytes = f.read()
-            upload_content_to_github(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME, 
-                                     IMAGE_PATH_IN_REPO, image_bytes, COMMIT_MESSAGE_IMAGE)
-         else: print("\nSkipping image upload due to missing GitHub configuration.")
-    else: print(f"\nLocal image file {local_image_filename} was not created. Skipping image upload.")
-
-    # Generate and Upload Redirect JSON
-    if GITHUB_TOKEN and GITHUB_REPO_OWNER != "YOUR_GITHUB_USERNAME" and GITHUB_REPO_NAME != "YOUR_REPOSITORY_NAME":
-        print(f"\nGenerating and uploading {JSON_REDIRECT_PATH_IN_REPO} to GitHub...")
-        # Construct the static raw URL to the image
-        # Ensure GITHUB_REPO_OWNER and GITHUB_REPO_NAME are the final resolved values
-        actual_repo_owner = GITHUB_REPO_OWNER 
-        actual_repo_name = GITHUB_REPO_NAME
+    create_schedule_image(upcoming_games, current_standings, cardinals_logo, LOCAL_IMAGE_FULL_PATH)
+    print(f"\nGenerating {JSON_REDIRECT_FILENAME} content...")
+    actual_repo_owner = GITHUB_REPO_OWNER 
+    actual_repo_name = GITHUB_REPO_NAME
+    default_branch = "main" 
+    static_image_url_in_repo = f"https://raw.githubusercontent.com/{actual_repo_owner}/{actual_repo_name}/{default_branch}/{IMAGE_PATH_IN_REPO}"
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    dynamic_filename_for_json_property = f"cardinals_schedule_{timestamp}.png" 
+    redirect_json_content = {
+        "url": static_image_url_in_repo, 
+        "filename": dynamic_filename_for_json_property,
+        "refresh_rate": 3600 # Added refresh_rate
+    }
+    try:
+        # Ensure directory for JSON exists if JSON_REDIRECT_FILENAME includes a path
+        json_dir = os.path.dirname(JSON_REDIRECT_FILENAME)
+        if json_dir and not os.path.exists(json_dir): # Check if json_dir is not empty
+            os.makedirs(json_dir, exist_ok=True)
         
-        # Determine the default branch (common ones are 'main' or 'master')
-        # For robustness, this might ideally be fetched or configured if it varies.
-        # For now, assuming 'main'. If your repo uses 'master', change it here.
-        default_branch = "main" 
-        
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        static_image_url = f"https://raw.githubusercontent.com/{actual_repo_owner}/{actual_repo_name}/{default_branch}/{IMAGE_PATH_IN_REPO}?ts={timestamp}"
-        
-        dynamic_filename_for_json = f"cardinals_schedule_{timestamp}.png" # This is for the 'filename' property in JSON
+        with open(JSON_REDIRECT_FILENAME, 'w') as f:
+            json.dump(redirect_json_content, f, indent=2)
+        print(f"Successfully saved {JSON_REDIRECT_FILENAME} locally.")
+    except Exception as e:
+        print(f"Error saving {JSON_REDIRECT_FILENAME} locally: {e}"); traceback.print_exc()
+    print("\nScript finished. Image and JSON redirect file are saved locally.")
+    print(f"Image at: {LOCAL_IMAGE_FULL_PATH}")
+    print(f"JSON at: {JSON_REDIRECT_FILENAME}")
+    print("The GitHub Actions workflow will handle committing and deploying these files.")
 
-        redirect_json_content = {
-            "url": static_image_url,
-            "filename": dynamic_filename_for_json,
-            "refresh_rate": 3600
-        }
-        json_string = json.dumps(redirect_json_content, indent=2)
-        
-        upload_content_to_github(GITHUB_TOKEN, actual_repo_owner, actual_repo_name,
-                                 JSON_REDIRECT_PATH_IN_REPO, json_string.encode('utf-8'), COMMIT_MESSAGE_JSON)
-    else:
-        print(f"\nSkipping {JSON_REDIRECT_PATH_IN_REPO} upload due to missing GitHub configuration.")
-
-    print("\nScript finished.")
