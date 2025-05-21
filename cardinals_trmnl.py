@@ -65,8 +65,8 @@ try:
 
     FONT_SIZE_LARGE = 36         # For "Upcoming Games" title
     FONT_SIZE_MEDIUM_BOLD = 28   # For Game Date/Time (Primary Item)
-    FONT_SIZE_MEDIUM = 26        # For Opponent, Standings Record
-    FONT_SIZE_SMALL = 20         # For TV info, Standings Rank/GB, Home/Away, Stadium
+    FONT_SIZE_MEDIUM = 26        # For Opponent, Standings Record, Combined Game Info
+    FONT_SIZE_SMALL = 20         # For TV info, Standings Rank/GB
     FONT_SIZE_XSMALL = 16        # For the timestamp
 except IOError:
     print(f"Specified Liberation font files not found by name. Trying common full paths or defaulting.")
@@ -256,16 +256,16 @@ def fetch_cardinals_data(team_id, num_days):
                     home_team_data = teams_data.get('home', {}).get('team', {}) if isinstance(teams_data.get('home',{}), dict) else {}
                     away_team_data = teams_data.get('away', {}).get('team', {}) if isinstance(teams_data.get('away',{}), dict) else {}
                     
-                    opponent_name = "vs Unknown"
+                    opponent_name_full = "vs Unknown" # Full opponent name for display
                     game_type = "Unknown" 
                     home_id = home_team_data.get('id')
                     away_id = away_team_data.get('id')
 
                     if home_id == team_id:
-                        opponent_name = f"vs {away_team_data.get('name', 'Opponent')}"
+                        opponent_name_full = f"vs {away_team_data.get('name', 'Opponent')}"
                         game_type = "Home"
                     elif away_id == team_id:
-                        opponent_name = f"@ {home_team_data.get('name', 'Opponent')}"
+                        opponent_name_full = f"@ {home_team_data.get('name', 'Opponent')}"
                         game_type = "Away"
                     else: continue 
 
@@ -280,7 +280,7 @@ def fetch_cardinals_data(team_id, num_days):
                     stadium_name = game_data.get('venue', {}).get('name', 'Stadium TBD')
 
                     games_info.append({
-                        "opponent": opponent_name, 
+                        "opponent_full": opponent_name_full, # Store the full opponent string
                         "datetime": formatted_time,
                         "broadcast": broadcast_str_list, 
                         "status": game_status,
@@ -402,52 +402,54 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
-        games_to_display = 2 
+        games_to_display = 3 # Try to fit 3 games
         for i, game in enumerate(games):
             if i >= games_to_display : break 
             
-            opponent_text = game.get("opponent", "N/A"); 
+            opponent_full_text = game.get("opponent_full", "N/A")
             datetime_text = game.get("datetime", "N/A")
             broadcast_list = game.get("broadcast", ["TBD"]) 
             game_type_text = game.get("game_type", "") 
             stadium_text = game.get("stadium", "")
 
+            # Construct combined opponent and location string
+            location_info = ""
+            if game_type_text:
+                location_info += f" ({game_type_text}"
+                if stadium_text and stadium_text != "Stadium TBD":
+                    location_info += f" at {stadium_text}"
+                location_info += ")"
+            
+            combined_opponent_loc_text = f"{opponent_full_text}{location_info}"
+            
+            # Estimate height for this game entry
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            estimated_height = (FONT_SIZE_MEDIUM_BOLD + 8 + 
-                                FONT_SIZE_MEDIUM + 8 + 
-                                FONT_SIZE_SMALL + 6 + 
-                                FONT_SIZE_SMALL + 8 + 
-                                (FONT_SIZE_SMALL + 5) * num_tv_lines + 
-                                25) 
+            estimated_height = (FONT_SIZE_MEDIUM_BOLD + 8 + # Date/Time
+                                FONT_SIZE_MEDIUM + 8 +    # Opponent + Location
+                                (FONT_SIZE_SMALL + 5) * num_tv_lines + # TV Lines
+                                30) # Overall padding for game block
                                 
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding - FONT_SIZE_XSMALL - 10 : 
                 print(f"Not enough vertical space for game {i+1}, stopping game display.")
+                if i < 1 : # If not even the first game fits, show a message
+                    draw.text((right_pane_x_start, y_pos), "Not enough space for game details.", font=font_small, fill=TEXT_COLOR)
                 break
             
+            # 1. Draw Date/Time as primary
             draw.text((right_pane_x_start, y_pos), datetime_text, font=font_medium_bold, fill=TEXT_COLOR)
             y_pos += FONT_SIZE_MEDIUM_BOLD + 8
 
-            draw.text((right_pane_x_start + 10, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
+            # 2. Draw Combined Opponent and Location
+            # Truncate if necessary
+            available_width_for_opponent = IMAGE_WIDTH - (right_pane_x_start + 10) - 10 # Small right margin
+            current_opponent_loc_text = combined_opponent_loc_text
+            while draw.textlength(current_opponent_loc_text, font=font_medium) > available_width_for_opponent and len(current_opponent_loc_text) > 10:
+                current_opponent_loc_text = current_opponent_loc_text[:-4] + "..."
+            
+            draw.text((right_pane_x_start + 10, y_pos), current_opponent_loc_text, font=font_medium, fill=TEXT_COLOR)
             y_pos += FONT_SIZE_MEDIUM + 8
             
-            # --- MODIFIED: Draw Home/Away and Stadium on separate lines ---
-            if game_type_text:
-                draw.text((right_pane_x_start + 10, y_pos), game_type_text, font=font_small, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 6 # Spacing after game_type
-            
-            if stadium_text:
-                # Simple truncation for stadium text if too long
-                max_stadium_width = IMAGE_WIDTH - (right_pane_x_start + 10) - 20 # available width
-                current_stadium_text = stadium_text
-                while draw.textlength(current_stadium_text, font=font_small) > max_stadium_width and len(current_stadium_text) > 5:
-                    current_stadium_text = current_stadium_text[:-4] + "..."
-                if draw.textlength(current_stadium_text, font=font_small) > max_stadium_width: # Final check
-                     current_stadium_text = current_stadium_text[:int(max_stadium_width/(FONT_SIZE_SMALL*0.5))-3] + "..."
-
-
-                draw.text((right_pane_x_start + 10, y_pos), current_stadium_text, font=font_small, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 8 # Spacing after stadium
-
+            # 3. Draw TV Info
             if broadcast_list:
                 tv_label_y = y_pos
                 draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
@@ -467,7 +469,7 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
                 y_pos += FONT_SIZE_SMALL + 5
 
-            y_pos += 25 
+            y_pos += 25 # Gap between game entries
     
     refresh_date_str = f"Data refreshed on {datetime.now().strftime('%m-%d-%Y')}"
     text_width = draw.textlength(refresh_date_str, font=font_xsmall)
@@ -509,7 +511,8 @@ if __name__ == "__main__":
     if upcoming_games:
         for game in upcoming_games: 
             broadcast_display = "/".join(game['broadcast']) if isinstance(game['broadcast'], list) else game['broadcast']
-            print(f"- {game['opponent']} ({game.get('game_type','?')}, {game.get('stadium','?')}) on {game['datetime']} (TV: {broadcast_display})")
+            # Updated print to match the new 'opponent_full' key
+            print(f"- {game.get('opponent_full','N/A')} ({game.get('game_type','?')}, {game.get('stadium','?')}) on {game['datetime']} (TV: {broadcast_display})")
     else: print("No upcoming games data fetched or error during fetch.")
     print("\nCurrent Standings:")
     print(f"- Record: {current_standings['record']}")
