@@ -288,7 +288,7 @@ def create_schedule_image(games, standings, logo_obj, output_image_path):
     draw.text((standings_x, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR); y_pos += FONT_SIZE_SMALL + 10  
     draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
     right_pane_x_start = left_pane_width + 25; y_pos = logo_y_padding 
-    draw.text((right_pane_x_start, y_pos), "Upcoming Games:", font=font_large, fill=TEXT_COLOR); y_pos += FONT_SIZE_LARGE + 20
+    draw.text((right_pane_x_start, y_pos), "Upcoming Games (test2):", font=font_large, fill=TEXT_COLOR); y_pos += FONT_SIZE_LARGE + 20
     if not games: draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
         games_to_display = 3 # Try to fit 3 games with the new layout
