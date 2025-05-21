@@ -8,6 +8,7 @@ from github import Github
 from github.GithubException import UnknownObjectException
 import os
 import traceback # For more detailed error logging
+import json # Added for JSON manipulation
 
 # --- CONFIGURATION ---
 # GitHub Configuration
@@ -43,7 +44,10 @@ else:
     GITHUB_REPO_NAME = GITHUB_REPO_NAME_HARDCODED
 
 IMAGE_PATH_IN_REPO = "trmnl_images/cardinals_schedule.png"
-COMMIT_MESSAGE = "Update St. Louis Cardinals TRMNL schedule image"
+JSON_REDIRECT_PATH_IN_REPO = "trmnl_redirect.json" # Path for the redirect JSON in the repo
+COMMIT_MESSAGE_IMAGE = "Update St. Louis Cardinals TRMNL schedule image"
+COMMIT_MESSAGE_JSON = "Update TRMNL redirect JSON for Cardinals schedule"
+
 
 # MLB Configuration
 TEAM_NAME = "St. Louis Cardinals"
@@ -63,11 +67,11 @@ try:
     ImageFont.truetype(FONT_PATH_BOLD, 10)
     print(f"Attempting to use Liberation fonts by name: {FONT_PATH_REGULAR}, {FONT_PATH_BOLD}")
 
-    FONT_SIZE_LARGE = 36         # For "Upcoming Games" title
-    FONT_SIZE_MEDIUM_BOLD = 28   # For Game Date/Time (Primary Item)
-    FONT_SIZE_MEDIUM = 26        # For Opponent, Standings Record, Combined Game Info
-    FONT_SIZE_SMALL = 20         # For TV info, Standings Rank/GB
-    FONT_SIZE_XSMALL = 16        # For the timestamp
+    FONT_SIZE_LARGE = 36
+    FONT_SIZE_MEDIUM_BOLD = 28
+    FONT_SIZE_MEDIUM = 26
+    FONT_SIZE_SMALL = 20
+    FONT_SIZE_XSMALL = 16
 except IOError:
     print(f"Specified Liberation font files not found by name. Trying common full paths or defaulting.")
     try:
@@ -93,7 +97,6 @@ LOGO_SIZE = (130, 130)
 
 # --- HELPER FUNCTIONS ---
 def get_team_logo(url, size):
-    """Downloads a logo, converts to B&W, and resizes."""
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -111,7 +114,6 @@ def get_team_logo(url, size):
     return None
 
 def format_game_time(game_date_utc_str, target_tz_str):
-    """Converts UTC game time string to a user-friendly format in the target timezone."""
     if not isinstance(game_date_utc_str, str): 
         print(f"Warning: format_game_time received non-string input: {game_date_utc_str}")
         return "Time TBD"
@@ -137,7 +139,6 @@ def format_game_time(game_date_utc_str, target_tz_str):
             except ValueError:
                 print(f"Could not parse game date: {game_date_utc_str}")
                 return "Time TBD"
-
         dt_utc = utc_tz.localize(dt_utc)
         dt_target = dt_utc.astimezone(target_tz)
         return dt_target.strftime("%a %b %d, %-I:%M %p %Z")
@@ -146,9 +147,6 @@ def format_game_time(game_date_utc_str, target_tz_str):
         return "Time TBD"
 
 def get_simplified_broadcasts(game_data_item):
-    """Extracts key TV broadcast information from a hydrated game object.
-       Excludes AM/FM radio and MLB.TV. Shortens FanDuel. Returns a list of broadcast strings.
-    """
     all_broadcast_items = []
     if 'broadcasts' in game_data_item and isinstance(game_data_item['broadcasts'], list):
         all_broadcast_items.extend(game_data_item['broadcasts'])
@@ -161,66 +159,39 @@ def get_simplified_broadcasts(game_data_item):
             epg_title = epg_title_raw.upper() if isinstance(epg_title_raw, str) else ''
             if epg_title in ["MLBTV", "TV"] and isinstance(epg_group.get('items'), list):
                 all_broadcast_items.extend(epg_group['items'])
-
-    if not all_broadcast_items:
-        return ["TBD"] 
-
+    if not all_broadcast_items: return ["TBD"] 
     national_tv = set()
     regional_tv = set()
-
     for broadcast in all_broadcast_items:
         if not isinstance(broadcast, dict): continue
-
         b_type_raw = broadcast.get('type', '')
         b_type = b_type_raw.upper() if isinstance(b_type_raw, str) else ''
-        
-        if b_type in ["AM", "FM"]: 
-            continue
-
+        if b_type in ["AM", "FM"]: continue
         name_raw = broadcast.get('name', broadcast.get('description', ''))
         name = name_raw if isinstance(name_raw, str) else ''
-        
-        if "MLB.TV" in name or b_type == "MLBTV":
-            continue 
-
+        if "MLB.TV" in name or b_type == "MLBTV": continue 
         is_tv_broadcast = (b_type == "TV" or (not b_type and name))
-
         if "FanDuel Sports Network" in name:
             short_name = name.replace("FanDuel Sports Network", "FanDuel").strip()
-            if not short_name or short_name == "FanDuel": 
-                short_name = "FanDuel SN" 
-            elif not short_name.startswith("FanDuel "): 
-                short_name = f"FanDuel {short_name}"
-            if broadcast.get('isNational'):
-                 national_tv.add(short_name)
-            else:
-                 regional_tv.add(short_name)
+            if not short_name or short_name == "FanDuel": short_name = "FanDuel SN" 
+            elif not short_name.startswith("FanDuel "): short_name = f"FanDuel {short_name}"
+            if broadcast.get('isNational'): national_tv.add(short_name)
+            else: regional_tv.add(short_name)
             continue 
-
         if broadcast.get('isNational') or name in ["ESPN", "FOX", "FS1", "TBS", "Apple TV+", "Peacock", "MLB Network"]:
             if name: national_tv.add(name)
         elif is_tv_broadcast or name: 
             call_sign_raw = broadcast.get('callSign', '')
             call_sign = call_sign_raw if isinstance(call_sign_raw, str) else ''
-            if call_sign and call_sign not in name and len(call_sign) < 7 and len(call_sign) > 2 :
-                regional_tv.add(call_sign)
-            elif name: 
-                regional_tv.add(name)
-    
+            if call_sign and call_sign not in name and len(call_sign) < 7 and len(call_sign) > 2 : regional_tv.add(call_sign)
+            elif name: regional_tv.add(name)
     display_list = []
-    if national_tv:
-        display_list.extend(sorted(list(national_tv)))
-    
+    if national_tv: display_list.extend(sorted(list(national_tv)))
     if regional_tv:
         allowed_regional_count = max(0, 3 - len(display_list)) 
-        if allowed_regional_count > 0:
-            display_list.extend(sorted(list(regional_tv))[:allowed_regional_count])
-            
-    if not display_list:
-        return ["TBD"] 
-
+        if allowed_regional_count > 0: display_list.extend(sorted(list(regional_tv))[:allowed_regional_count])
+    if not display_list: return ["TBD"] 
     return display_list
-
 
 # --- FETCH MLB DATA ---
 def fetch_cardinals_data(team_id, num_days):
@@ -230,7 +201,6 @@ def fetch_cardinals_data(team_id, num_days):
     end_date_dt = start_date_dt + timedelta(days=num_days -1) 
     start_date_str = start_date_dt.strftime('%Y-%m-%d')
     end_date_str = end_date_dt.strftime('%Y-%m-%d')
-    
     print(f"Fetching hydrated schedule for Cardinals (ID: {team_id}) from {start_date_str} to {end_date_str} using statsapi.get()...")
     try:
         schedule_params = {
@@ -238,7 +208,6 @@ def fetch_cardinals_data(team_id, num_days):
             'hydrate': 'team,broadcasts(all),linescore,game(content(media(epg))),series(content),venue' 
         }
         schedule_response = statsapi.get('schedule', schedule_params)
-
         if not schedule_response or 'dates' not in schedule_response:
             print("No schedule data returned or unexpected format from statsapi.get('schedule').")
         else:
@@ -246,21 +215,16 @@ def fetch_cardinals_data(team_id, num_days):
             for date_obj in schedule_response.get('dates', []):
                 for game_data in date_obj.get('games', []): 
                     if processed_games_count >= num_days: break
-                    
                     game_status_obj = game_data.get('status', {})
                     game_status = game_status_obj.get('abstractGameState', 'Unknown') if isinstance(game_status_obj, dict) else 'Unknown'
-
                     if game_status in ["Final", "Game Over", "Completed Early", "Cancelled"]: continue
-
                     teams_data = game_data.get('teams', {})
                     home_team_data = teams_data.get('home', {}).get('team', {}) if isinstance(teams_data.get('home',{}), dict) else {}
                     away_team_data = teams_data.get('away', {}).get('team', {}) if isinstance(teams_data.get('away',{}), dict) else {}
-                    
-                    opponent_name_full = "vs Unknown" # Full opponent name for display
+                    opponent_name_full = "vs Unknown" 
                     game_type = "Unknown" 
                     home_id = home_team_data.get('id')
                     away_id = away_team_data.get('id')
-
                     if home_id == team_id:
                         opponent_name_full = f"vs {away_team_data.get('name', 'Opponent')}"
                         game_type = "Home"
@@ -268,42 +232,28 @@ def fetch_cardinals_data(team_id, num_days):
                         opponent_name_full = f"@ {home_team_data.get('name', 'Opponent')}"
                         game_type = "Away"
                     else: continue 
-
                     broadcast_str_list = get_simplified_broadcasts(game_data) 
-                    
                     game_datetime_utc_str = game_data.get('gameDate') 
                     if not game_datetime_utc_str and isinstance(date_obj, dict): 
                         game_datetime_utc_str = date_obj.get('date')
-                    
                     formatted_time = format_game_time(game_datetime_utc_str, DISPLAY_TIMEZONE)
-                    
                     stadium_name = game_data.get('venue', {}).get('name', 'Stadium TBD')
-
                     games_info.append({
-                        "opponent_full": opponent_name_full, # Store the full opponent string
-                        "datetime": formatted_time,
-                        "broadcast": broadcast_str_list, 
-                        "status": game_status,
-                        "game_type": game_type, 
-                        "stadium": stadium_name   
+                        "opponent_full": opponent_name_full, 
+                        "datetime": formatted_time, "broadcast": broadcast_str_list, 
+                        "status": game_status, "game_type": game_type, "stadium": stadium_name   
                     })
                     processed_games_count += 1
                 if processed_games_count >= num_days: break
-        
     except Exception as e:
-        print(f"Error in fetch_cardinals_data (schedule part): {e}")
-        traceback.print_exc()
-
+        print(f"Error in fetch_cardinals_data (schedule part): {e}"); traceback.print_exc()
     print("Fetching standings using statsapi.get('standings')...")
     try:
         current_year = datetime.now().year
         standings_params = {
-            'leagueId': "103,104", 
-            'season': str(current_year),
-            'standingsTypes': 'regularSeason',
+            'leagueId': "103,104", 'season': str(current_year), 'standingsTypes': 'regularSeason',
         }
         standings_response = statsapi.get('standings', standings_params)
-        
         if not standings_response or 'records' not in standings_response:
             print("Standings data is empty or not in expected format from statsapi.get('standings').")
         else:
@@ -311,40 +261,29 @@ def fetch_cardinals_data(team_id, num_days):
             for record in standings_response.get('records', []):
                 if found_team: break
                 if not isinstance(record, dict) or 'teamRecords' not in record: continue
-                
                 division_name_obj = record.get('division', {})
                 division_name = division_name_obj.get('nameShort', 'N/A') if isinstance(division_name_obj, dict) else 'N/A'
-                
                 if division_name == 'N/A' and 'league' in record: 
                     league_name_obj = record.get('league',{})
                     division_name = league_name_obj.get('nameShort', 'League') if isinstance(league_name_obj, dict) else 'League'
-
                 for team_standing in record.get('teamRecords', []):
                     if not isinstance(team_standing, dict) or 'team' not in team_standing: continue
-                    
                     team_api_data = team_standing.get('team', {})
                     if not isinstance(team_api_data, dict): continue
-
                     if team_api_data.get('id') == team_id:
                         league_record = team_standing.get('leagueRecord', {})
                         wins = league_record.get('wins', 0) if isinstance(league_record, dict) else 0
                         losses = league_record.get('losses', 0) if isinstance(league_record, dict) else 0
-                        
                         standings_info["record"] = f"{wins}-{losses}"
                         rank_val = team_standing.get('divisionRank', team_standing.get('leagueRank', 'N/A'))
                         gb_val = team_standing.get('gamesBack', 'N/A')
                         if gb_val == '-': gb_val = '0.0' 
-
                         standings_info["rank"] = f"{rank_val} in {division_name}"
                         standings_info["gb"] = f"{gb_val} GB"
-                        found_team = True
-                        break
-            if not found_team:
-                 print(f"Could not find Cardinals (ID: {team_id}) in standings data from statsapi.get('standings').")
+                        found_team = True; break
+            if not found_team: print(f"Could not find Cardinals (ID: {team_id}) in standings data.")
     except Exception as e:
-        print(f"Error fetching standings with statsapi.get('standings'): {e}")
-        traceback.print_exc()
-        
+        print(f"Error fetching standings: {e}"); traceback.print_exc()
     return games_info, standings_info
 
 # --- CREATE IMAGE ---
@@ -361,124 +300,55 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             font_small_bold = ImageFont.truetype(FONT_PATH_BOLD, FONT_SIZE_SMALL)
             font_xsmall = ImageFont.truetype(FONT_PATH_REGULAR, FONT_SIZE_XSMALL)
             print(f"Successfully loaded fonts by name: {FONT_PATH_BOLD}, {FONT_PATH_REGULAR}")
-        else: 
-            raise IOError("Font paths were None, attempting Pillow default.")
+        else: raise IOError("Font paths were None.")
     except IOError: 
-        print("Specified font files not found or paths were None. Defaulting to Pillow's load_default() font.")
-        font_large = ImageFont.load_default() 
-        font_medium_bold = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-        font_small_bold = ImageFont.load_default() 
-        font_xsmall = ImageFont.load_default()
-    
-    # Left Pane (Logo and Standings)
-    logo_x_padding = 20
-    logo_y_padding = 20
-    left_pane_width = LOGO_SIZE[0] + logo_x_padding * 2 
-    
-    if logo_obj: 
-        img.paste(logo_obj, (logo_x_padding, logo_y_padding), mask=logo_obj if logo_obj.mode == 'RGBA' else None)
-
-    y_pos = logo_y_padding + LOGO_SIZE[1] + 25 
-    standings_x = logo_x_padding
-
-    draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_MEDIUM + 10 
-    draw.text((standings_x, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_MEDIUM + 10 
-    draw.text((standings_x, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_SMALL + 10  
+        print("Defaulting to Pillow's load_default() font."); font_large, font_medium_bold, font_medium, font_small, font_small_bold, font_xsmall = [ImageFont.load_default()]*6
+    logo_x_padding, logo_y_padding = 20, 20; left_pane_width = LOGO_SIZE[0] + logo_x_padding * 2 
+    if logo_obj: img.paste(logo_obj, (logo_x_padding, logo_y_padding), mask=logo_obj if logo_obj.mode == 'RGBA' else None)
+    y_pos = logo_y_padding + LOGO_SIZE[1] + 25; standings_x = logo_x_padding
+    draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 10 
+    draw.text((standings_x, y_pos), standings.get("record", "N/A"), font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 10 
+    draw.text((standings_x, y_pos), standings.get("rank", "N/A"), font=font_small, fill=TEXT_COLOR); y_pos += FONT_SIZE_SMALL + 10  
     draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
-
-    # Right Pane (Upcoming Games)
-    right_pane_x_start = left_pane_width + 25 
-    y_pos = logo_y_padding 
-    
-    title_text = "Upcoming Games:"
-    draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 20
-
-    if not games:
-        draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
+    right_pane_x_start = left_pane_width + 25; y_pos = logo_y_padding 
+    draw.text((right_pane_x_start, y_pos), "Upcoming Games:", font=font_large, fill=TEXT_COLOR); y_pos += FONT_SIZE_LARGE + 20
+    if not games: draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
-        games_to_display = 3 # Try to fit 3 games
+        games_to_display = 3
         for i, game in enumerate(games):
             if i >= games_to_display : break 
-            
-            opponent_full_text = game.get("opponent_full", "N/A")
-            datetime_text = game.get("datetime", "N/A")
-            broadcast_list = game.get("broadcast", ["TBD"]) 
-            game_type_text = game.get("game_type", "") 
-            stadium_text = game.get("stadium", "")
-
-            # Construct combined opponent and location string
-            location_info = ""
-            if game_type_text:
-                location_info += f" ({game_type_text})"
-            
+            opponent_full_text, datetime_text, broadcast_list, game_type_text, stadium_text = game.get("opponent_full", "N/A"), game.get("datetime", "N/A"), game.get("broadcast", ["TBD"]), game.get("game_type", ""), game.get("stadium", "")
+            location_info = f" ({game_type_text})" if game_type_text and stadium_text and stadium_text != "Stadium TBD" else f" ({game_type_text})" if game_type_text else ""
             combined_opponent_loc_text = f"{opponent_full_text}{location_info}"
-            
-            # Estimate height for this game entry
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            estimated_height = (FONT_SIZE_MEDIUM_BOLD + 8 + # Date/Time
-                                FONT_SIZE_MEDIUM + 8 +    # Opponent + Location
-                                (FONT_SIZE_SMALL + 5) * num_tv_lines + # TV Lines
-                                30) # Overall padding for game block
-                                
+            estimated_height = FONT_SIZE_MEDIUM_BOLD + 8 + FONT_SIZE_MEDIUM + 8 + (FONT_SIZE_SMALL + 5) * num_tv_lines + 30 
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding - FONT_SIZE_XSMALL - 10 : 
-                print(f"Not enough vertical space for game {i+1}, stopping game display.")
-                if i < 1 : # If not even the first game fits, show a message
-                    draw.text((right_pane_x_start, y_pos), "Not enough space for game details.", font=font_small, fill=TEXT_COLOR)
-                break
-            
-            # 1. Draw Date/Time as primary
-            draw.text((right_pane_x_start, y_pos), datetime_text, font=font_medium_bold, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_MEDIUM_BOLD + 8
-
-            # 2. Draw Combined Opponent and Location
-            # Truncate if necessary
-            available_width_for_opponent = IMAGE_WIDTH - (right_pane_x_start + 10) - 10 # Small right margin
+                print(f"Not enough space for game {i+1}."); break
+            draw.text((right_pane_x_start, y_pos), datetime_text, font=font_medium_bold, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM_BOLD + 8
+            available_width_for_opponent = IMAGE_WIDTH - (right_pane_x_start + 10) - 10
             current_opponent_loc_text = combined_opponent_loc_text
-            while draw.textlength(current_opponent_loc_text, font=font_medium) > available_width_for_opponent and len(current_opponent_loc_text) > 10:
-                current_opponent_loc_text = current_opponent_loc_text[:-4] + "..."
-            
-            draw.text((right_pane_x_start + 10, y_pos), current_opponent_loc_text, font=font_medium, fill=TEXT_COLOR)
-            y_pos += FONT_SIZE_MEDIUM + 8
-            
-            # 3. Draw TV Info
+            while draw.textlength(current_opponent_loc_text, font=font_medium) > available_width_for_opponent and len(current_opponent_loc_text) > 10: current_opponent_loc_text = current_opponent_loc_text[:-4] + "..."
+            draw.text((right_pane_x_start + 10, y_pos), current_opponent_loc_text, font=font_medium, fill=TEXT_COLOR); y_pos += FONT_SIZE_MEDIUM + 8
             if broadcast_list:
-                tv_label_y = y_pos
-                draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
-                
+                tv_label_y = y_pos; draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
                 channel_x_start = right_pane_x_start + 10 + draw.textlength("TV:  ", font=font_small_bold) 
-                
                 current_line_y = tv_label_y
                 for k, channel in enumerate(broadcast_list):
-                    if k > 0: 
-                         current_line_y += FONT_SIZE_SMALL + 5
-                    
+                    if k > 0: current_line_y += FONT_SIZE_SMALL + 5
                     if current_line_y > IMAGE_HEIGHT - (FONT_SIZE_SMALL + 5) : break 
                     draw.text((channel_x_start, current_line_y), channel, font=font_small, fill=TEXT_COLOR)
-                
                 y_pos = current_line_y + FONT_SIZE_SMALL + 5
-            else: 
-                draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 5
-
-            y_pos += 25 # Gap between game entries
-    
+            else: draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR); y_pos += FONT_SIZE_SMALL + 5
+            y_pos += 25 
     refresh_date_str = f"Data refreshed on {datetime.now().strftime('%m-%d-%Y')}"
     text_width = draw.textlength(refresh_date_str, font=font_xsmall)
-    text_x = IMAGE_WIDTH - text_width - 15 
-    text_y = IMAGE_HEIGHT - FONT_SIZE_XSMALL - 15 
+    text_x = IMAGE_WIDTH - text_width - 15; text_y = IMAGE_HEIGHT - FONT_SIZE_XSMALL - 15 
     draw.text((text_x, text_y), refresh_date_str, font=font_xsmall, fill=TEXT_COLOR)
-            
-    eink_image = img.convert("1", dither=Image.Dither.NONE) 
-    eink_image.save(output_filename); print(f"Image saved as {output_filename}")
+    eink_image = img.convert("1", dither=Image.Dither.NONE); eink_image.save(output_filename); print(f"Image saved as {output_filename}")
 
-# --- UPLOAD TO GITHUB ---
-def upload_to_github(token, repo_owner, repo_name, file_path_in_repo, local_file_path, commit_msg):
+# --- UPLOAD CONTENT TO GITHUB ---
+def upload_content_to_github(token, repo_owner, repo_name, file_path_in_repo, content_bytes, commit_msg):
+    """Uploads bytes content (image or text encoded to bytes) to GitHub."""
     if not token: print("GitHub token not provided. Skipping upload."); return
     if not repo_owner or not repo_name or repo_owner == "YOUR_GITHUB_USERNAME" or repo_name == "YOUR_REPOSITORY_NAME":
         print("GitHub repository owner or name not properly configured. Skipping upload."); return
@@ -486,15 +356,13 @@ def upload_to_github(token, repo_owner, repo_name, file_path_in_repo, local_file
         g = Github(token); repo = g.get_repo(f"{repo_owner}/{repo_name}")
     except Exception as e: print(f"Error accessing GitHub repository {repo_owner}/{repo_name}: {e}"); return
     try:
-        with open(local_file_path, "rb") as f: content = f.read()
         try:
             existing_file = repo.get_contents(file_path_in_repo)
-            repo.update_file(path=file_path_in_repo, message=commit_msg, content=content, sha=existing_file.sha)
+            repo.update_file(path=file_path_in_repo, message=commit_msg, content=content_bytes, sha=existing_file.sha)
             print(f"Successfully updated {file_path_in_repo} in {repo_owner}/{repo_name}")
         except UnknownObjectException:
-            repo.create_file(path=file_path_in_repo, message=commit_msg, content=content)
+            repo.create_file(path=file_path_in_repo, message=commit_msg, content=content_bytes)
             print(f"Successfully created {file_path_in_repo} in {repo_owner}/{repo_name}")
-    except FileNotFoundError: print(f"Local image file {local_file_path} not found. Skipping upload.")
     except Exception as e: print(f"Error uploading file to GitHub: {e}"); traceback.print_exc()
 
 # --- MAIN EXECUTION ---
@@ -502,15 +370,16 @@ if __name__ == "__main__":
     if not GITHUB_TOKEN or GITHUB_REPO_OWNER == "YOUR_GITHUB_USERNAME" or GITHUB_REPO_NAME == "YOUR_REPOSITORY_NAME":
         print("WARNING: GitHub credentials are not fully set. Upload will be skipped unless configured.")
 
-    print("Starting St. Louis Cardinals schedule image generation (using statsapi.get for schedule)...")
+    print("Starting St. Louis Cardinals schedule image generation...")
     upcoming_games, current_standings = fetch_cardinals_data(TEAM_ID, DAYS_AHEAD)
-    print("\nFetched Games (Using statsapi.get for schedule):")
+    
+    print("\nFetched Games:")
     if upcoming_games:
         for game in upcoming_games: 
             broadcast_display = "/".join(game['broadcast']) if isinstance(game['broadcast'], list) else game['broadcast']
-            # Updated print to match the new 'opponent_full' key
             print(f"- {game.get('opponent_full','N/A')} ({game.get('game_type','?')}, {game.get('stadium','?')}) on {game['datetime']} (TV: {broadcast_display})")
-    else: print("No upcoming games data fetched or error during fetch.")
+    else: print("No upcoming games data fetched.")
+    
     print("\nCurrent Standings:")
     print(f"- Record: {current_standings['record']}")
     print(f"- Rank: {current_standings['rank']}")
@@ -518,13 +387,48 @@ if __name__ == "__main__":
 
     cardinals_logo = get_team_logo(LOGO_URL, LOGO_SIZE)
     if not cardinals_logo: print("Could not load logo. Proceeding without it.")
+    
     local_image_filename = "cardinals_schedule_eink.png"
     create_schedule_image(upcoming_games, current_standings, cardinals_logo, local_image_filename)
 
+    # Upload Image
     if os.path.exists(local_image_filename):
          if GITHUB_TOKEN and GITHUB_REPO_OWNER != "YOUR_GITHUB_USERNAME" and GITHUB_REPO_NAME != "YOUR_REPOSITORY_NAME":
             print(f"\nUploading {local_image_filename} to GitHub...")
-            upload_to_github(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME, IMAGE_PATH_IN_REPO, local_image_filename, COMMIT_MESSAGE)
-         else: print("\nSkipping GitHub upload due to missing configuration.")
-    else: print(f"\nLocal image file {local_image_filename} was not created. Skipping GitHub upload.")
+            with open(local_image_filename, "rb") as f:
+                image_bytes = f.read()
+            upload_content_to_github(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME, 
+                                     IMAGE_PATH_IN_REPO, image_bytes, COMMIT_MESSAGE_IMAGE)
+         else: print("\nSkipping image upload due to missing GitHub configuration.")
+    else: print(f"\nLocal image file {local_image_filename} was not created. Skipping image upload.")
+
+    # Generate and Upload Redirect JSON
+    if GITHUB_TOKEN and GITHUB_REPO_OWNER != "YOUR_GITHUB_USERNAME" and GITHUB_REPO_NAME != "YOUR_REPOSITORY_NAME":
+        print(f"\nGenerating and uploading {JSON_REDIRECT_PATH_IN_REPO} to GitHub...")
+        # Construct the static raw URL to the image
+        # Ensure GITHUB_REPO_OWNER and GITHUB_REPO_NAME are the final resolved values
+        actual_repo_owner = GITHUB_REPO_OWNER 
+        actual_repo_name = GITHUB_REPO_NAME
+        
+        # Determine the default branch (common ones are 'main' or 'master')
+        # For robustness, this might ideally be fetched or configured if it varies.
+        # For now, assuming 'main'. If your repo uses 'master', change it here.
+        default_branch = "main" 
+        
+        static_image_url = f"https://raw.githubusercontent.com/{actual_repo_owner}/{actual_repo_name}/{default_branch}/{IMAGE_PATH_IN_REPO}"
+        
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        dynamic_filename_for_json = f"cardinals_schedule_{timestamp}.png" # This is for the 'filename' property in JSON
+
+        redirect_json_content = {
+            "url": static_image_url,
+            "filename": dynamic_filename_for_json
+        }
+        json_string = json.dumps(redirect_json_content, indent=2)
+        
+        upload_content_to_github(GITHUB_TOKEN, actual_repo_owner, actual_repo_name,
+                                 JSON_REDIRECT_PATH_IN_REPO, json_string.encode('utf-8'), COMMIT_MESSAGE_JSON)
+    else:
+        print(f"\nSkipping {JSON_REDIRECT_PATH_IN_REPO} upload due to missing GitHub configuration.")
+
     print("\nScript finished.")
