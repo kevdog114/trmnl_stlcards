@@ -415,9 +415,9 @@ if __name__ == "__main__":
         # For now, assuming 'main'. If your repo uses 'master', change it here.
         default_branch = "main" 
         
-        static_image_url = f"https://raw.githubusercontent.com/{actual_repo_owner}/{actual_repo_name}/{default_branch}/{IMAGE_PATH_IN_REPO}"
-        
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        static_image_url = f"https://raw.githubusercontent.com/{actual_repo_owner}/{actual_repo_name}/{default_branch}/{IMAGE_PATH_IN_REPO}?ts={timestamp}"
+        
         dynamic_filename_for_json = f"cardinals_schedule_{timestamp}.png" # This is for the 'filename' property in JSON
 
         redirect_json_content = {
