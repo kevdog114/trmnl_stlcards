@@ -63,7 +63,6 @@ try:
     ImageFont.truetype(FONT_PATH_BOLD, 10)
     print(f"Attempting to use Liberation fonts by name: {FONT_PATH_REGULAR}, {FONT_PATH_BOLD}")
 
-    # Increased font sizes again
     FONT_SIZE_LARGE = 36         # For "Upcoming Games" title
     FONT_SIZE_MEDIUM_BOLD = 28   # For Game Date/Time (Primary Item)
     FONT_SIZE_MEDIUM = 26        # For Opponent, Standings Record
@@ -82,7 +81,6 @@ except IOError:
         FONT_PATH_REGULAR = None 
         FONT_PATH_BOLD = None    
 
-    # Fallback sizes if custom fonts not found or fail to load
     FONT_SIZE_LARGE = 32
     FONT_SIZE_MEDIUM_BOLD = 26
     FONT_SIZE_MEDIUM = 24
@@ -149,7 +147,7 @@ def format_game_time(game_date_utc_str, target_tz_str):
 
 def get_simplified_broadcasts(game_data_item):
     """Extracts key TV broadcast information from a hydrated game object.
-       Excludes AM/FM radio. Returns a list of broadcast strings.
+       Excludes AM/FM radio and MLB.TV. Shortens FanDuel. Returns a list of broadcast strings.
     """
     all_broadcast_items = []
     if 'broadcasts' in game_data_item and isinstance(game_data_item['broadcasts'], list):
@@ -167,7 +165,6 @@ def get_simplified_broadcasts(game_data_item):
     if not all_broadcast_items:
         return ["TBD"] 
 
-    has_mlbtv_type = False
     national_tv = set()
     regional_tv = set()
 
@@ -177,20 +174,31 @@ def get_simplified_broadcasts(game_data_item):
         b_type_raw = broadcast.get('type', '')
         b_type = b_type_raw.upper() if isinstance(b_type_raw, str) else ''
         
-        if b_type in ["AM", "FM"]:
+        if b_type in ["AM", "FM"]: 
             continue
 
         name_raw = broadcast.get('name', broadcast.get('description', ''))
         name = name_raw if isinstance(name_raw, str) else ''
-
-        media_state_raw = broadcast.get('mediaState', '')
-        media_state = media_state_raw.upper() if isinstance(media_state_raw, str) else ''
         
+        if "MLB.TV" in name or b_type == "MLBTV":
+            continue 
+
         is_tv_broadcast = (b_type == "TV" or (not b_type and name))
 
+        # --- MODIFIED FANDUEL SHORTENING ---
+        if "FanDuel Sports Network" in name:
+            short_name = name.replace("FanDuel Sports Network", "FanDuel").strip()
+            # Ensure "FanDuel" itself is not empty if the original name was *only* "FanDuel Sports Network"
+            if not short_name or short_name == "FanDuel": # If it becomes just "FanDuel" or empty, use a generic
+                short_name = "FanDuel SN" 
+            elif not short_name.startswith("FanDuel "): # If region was directly after, ensure space
+                short_name = f"FanDuel {short_name}"
 
-        if "MLB.TV" in name or b_type == "MLBTV" or ("MLBTV" in media_state):
-            has_mlbtv_type = True
+
+            if broadcast.get('isNational'):
+                 national_tv.add(short_name)
+            else:
+                 regional_tv.add(short_name)
             continue 
 
         if broadcast.get('isNational') or name in ["ESPN", "FOX", "FS1", "TBS", "Apple TV+", "Peacock", "MLB Network"]:
@@ -211,14 +219,6 @@ def get_simplified_broadcasts(game_data_item):
         allowed_regional_count = max(0, 3 - len(display_list)) 
         if allowed_regional_count > 0:
             display_list.extend(sorted(list(regional_tv))[:allowed_regional_count])
-
-    if has_mlbtv_type:
-        is_mlb_network_listed = any("MLB Network" in s for s in display_list)
-        if not is_mlb_network_listed: 
-            if not display_list: 
-                display_list.append("MLB.TV")
-            elif len(display_list) < 3: 
-                display_list.append("MLB.TV")
             
     if not display_list:
         return ["TBD"] 
@@ -376,7 +376,7 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     if logo_obj: 
         img.paste(logo_obj, (logo_x_padding, logo_y_padding), mask=logo_obj if logo_obj.mode == 'RGBA' else None)
 
-    y_pos = logo_y_padding + LOGO_SIZE[1] + 25 # Increased spacing
+    y_pos = logo_y_padding + LOGO_SIZE[1] + 25 
     standings_x = logo_x_padding
 
     draw.text((standings_x, y_pos), "Standings:", font=font_medium, fill=TEXT_COLOR)
@@ -388,17 +388,17 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     draw.text((standings_x, y_pos), standings.get("gb", "N/A"), font=font_small, fill=TEXT_COLOR)
 
     # Right Pane (Upcoming Games)
-    right_pane_x_start = left_pane_width + 25 # Increased gap
+    right_pane_x_start = left_pane_width + 25 
     y_pos = logo_y_padding 
     
     title_text = "Upcoming Games:"
     draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 25 # Increased spacing
+    y_pos += FONT_SIZE_LARGE + 25 
 
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
-        games_to_display = 2 # Reduced to 2 to ensure fit with larger fonts and new layout
+        games_to_display = 2 
         for i, game in enumerate(games):
             if i >= games_to_display : break 
             
@@ -406,23 +406,18 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
             datetime_text = game.get("datetime", "N/A")
             broadcast_list = game.get("broadcast", ["TBD"]) 
 
-            # Estimate height for this game entry
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            # Height: Date (MediumBold) + Opponent (Medium) + TV lines (Small * num_broadcasts) + paddings
             estimated_height = FONT_SIZE_MEDIUM_BOLD + 10 + FONT_SIZE_MEDIUM + 10 + (FONT_SIZE_SMALL + 6) * num_tv_lines + 30 
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding - FONT_SIZE_XSMALL - 10 : 
                 print(f"Not enough vertical space for game {i+1}, stopping game display.")
                 break
             
-            # Draw Date/Time as primary
             draw.text((right_pane_x_start, y_pos), datetime_text, font=font_medium_bold, fill=TEXT_COLOR)
             y_pos += FONT_SIZE_MEDIUM_BOLD + 8
 
-            # Draw Opponent underneath
             draw.text((right_pane_x_start + 10, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
             y_pos += FONT_SIZE_MEDIUM + 8
             
-            # Draw TV Info
             if broadcast_list:
                 tv_label_y = y_pos
                 draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
@@ -442,13 +437,12 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
                 y_pos += FONT_SIZE_SMALL + 5
 
-            y_pos += 25 # Increased gap between game entries
+            y_pos += 25 
     
-    # Add "Data refreshed on" timestamp
     refresh_date_str = f"Data refreshed on {datetime.now().strftime('%m-%d-%Y')}"
     text_width = draw.textlength(refresh_date_str, font=font_xsmall)
-    text_x = IMAGE_WIDTH - text_width - 15 # 15px padding from right
-    text_y = IMAGE_HEIGHT - FONT_SIZE_XSMALL - 15 # 15px padding from bottom
+    text_x = IMAGE_WIDTH - text_width - 15 
+    text_y = IMAGE_HEIGHT - FONT_SIZE_XSMALL - 15 
     draw.text((text_x, text_y), refresh_date_str, font=font_xsmall, fill=TEXT_COLOR)
             
     eink_image = img.convert("1", dither=Image.Dither.NONE) 
