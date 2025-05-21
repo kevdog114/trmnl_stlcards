@@ -235,7 +235,7 @@ def fetch_cardinals_data(team_id, num_days):
     try:
         schedule_params = {
             'sportId': 1, 'teamId': team_id, 'startDate': start_date_str, 'endDate': end_date_str,
-            'hydrate': 'team,broadcasts(all),linescore,game(content(media(epg))),series(content),venue' # Added venue
+            'hydrate': 'team,broadcasts(all),linescore,game(content(media(epg))),series(content),venue' 
         }
         schedule_response = statsapi.get('schedule', schedule_params)
 
@@ -257,7 +257,7 @@ def fetch_cardinals_data(team_id, num_days):
                     away_team_data = teams_data.get('away', {}).get('team', {}) if isinstance(teams_data.get('away',{}), dict) else {}
                     
                     opponent_name = "vs Unknown"
-                    game_type = "Unknown" # Home or Away
+                    game_type = "Unknown" 
                     home_id = home_team_data.get('id')
                     away_id = away_team_data.get('id')
 
@@ -284,8 +284,8 @@ def fetch_cardinals_data(team_id, num_days):
                         "datetime": formatted_time,
                         "broadcast": broadcast_str_list, 
                         "status": game_status,
-                        "game_type": game_type, # Added game type
-                        "stadium": stadium_name   # Added stadium
+                        "game_type": game_type, 
+                        "stadium": stadium_name   
                     })
                     processed_games_count += 1
                 if processed_games_count >= num_days: break
@@ -397,63 +397,57 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
     
     title_text = "Upcoming Games:"
     draw.text((right_pane_x_start, y_pos), title_text, font=font_large, fill=TEXT_COLOR)
-    y_pos += FONT_SIZE_LARGE + 20 # Adjusted spacing
+    y_pos += FONT_SIZE_LARGE + 20
 
     if not games:
         draw.text((right_pane_x_start, y_pos), "No upcoming games found.", font=font_medium, fill=TEXT_COLOR)
     else:
-        games_to_display = 2 # Limit to 2 games to ensure fit
+        games_to_display = 2 
         for i, game in enumerate(games):
             if i >= games_to_display : break 
             
             opponent_text = game.get("opponent", "N/A"); 
             datetime_text = game.get("datetime", "N/A")
             broadcast_list = game.get("broadcast", ["TBD"]) 
-            game_type_text = game.get("game_type", "") # Home/Away
+            game_type_text = game.get("game_type", "") 
             stadium_text = game.get("stadium", "")
 
-            # Estimate height for this game entry
             num_tv_lines = len(broadcast_list) if broadcast_list else 1
-            # Height: Date (MB) + Opponent (M) + Home/Away (S) + Stadium (S) + TV lines (S * num_broadcasts) + paddings
             estimated_height = (FONT_SIZE_MEDIUM_BOLD + 8 + 
                                 FONT_SIZE_MEDIUM + 8 + 
-                                FONT_SIZE_SMALL + 6 + # For Home/Away
-                                FONT_SIZE_SMALL + 8 + # For Stadium
+                                FONT_SIZE_SMALL + 6 + 
+                                FONT_SIZE_SMALL + 8 + 
                                 (FONT_SIZE_SMALL + 5) * num_tv_lines + 
-                                25) # Overall padding for game block
+                                25) 
                                 
             if y_pos + estimated_height > IMAGE_HEIGHT - logo_y_padding - FONT_SIZE_XSMALL - 10 : 
                 print(f"Not enough vertical space for game {i+1}, stopping game display.")
                 break
             
-            # Draw Date/Time as primary
             draw.text((right_pane_x_start, y_pos), datetime_text, font=font_medium_bold, fill=TEXT_COLOR)
             y_pos += FONT_SIZE_MEDIUM_BOLD + 8
 
-            # Draw Opponent underneath
             draw.text((right_pane_x_start + 10, y_pos), opponent_text, font=font_medium, fill=TEXT_COLOR)
             y_pos += FONT_SIZE_MEDIUM + 8
             
-            # Draw Home/Away and Stadium
-            if game_type_text and stadium_text:
-                loc_text = f"{game_type_text} at {stadium_text}"
-                 # Truncate stadium if too long
-                max_loc_len = 45 
-                if draw.textlength(loc_text, font=font_small) > (IMAGE_WIDTH - (right_pane_x_start + 10) - 10):
-                    # Attempt to shorten stadium part if too long
-                    available_width_for_stadium = (IMAGE_WIDTH - (right_pane_x_start + 10) - 10) - draw.textlength(f"{game_type_text} at ", font=font_small)
-                    if len(stadium_text) * (font_small.size * 0.6) > available_width_for_stadium : # Rough estimate
-                        stadium_text = stadium_text[:int(available_width_for_stadium / (font_small.size*0.6) ) -3] + "..."
-                    loc_text = f"{game_type_text} at {stadium_text}"
-
-                draw.text((right_pane_x_start + 10, y_pos), loc_text, font=font_small, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 8
-            elif game_type_text: # Only game type
+            # --- MODIFIED: Draw Home/Away and Stadium on separate lines ---
+            if game_type_text:
                 draw.text((right_pane_x_start + 10, y_pos), game_type_text, font=font_small, fill=TEXT_COLOR)
-                y_pos += FONT_SIZE_SMALL + 8
+                y_pos += FONT_SIZE_SMALL + 6 # Spacing after game_type
+            
+            if stadium_text:
+                # Simple truncation for stadium text if too long
+                max_stadium_width = IMAGE_WIDTH - (right_pane_x_start + 10) - 20 # available width
+                current_stadium_text = stadium_text
+                while draw.textlength(current_stadium_text, font=font_small) > max_stadium_width and len(current_stadium_text) > 5:
+                    current_stadium_text = current_stadium_text[:-4] + "..."
+                if draw.textlength(current_stadium_text, font=font_small) > max_stadium_width: # Final check
+                     current_stadium_text = current_stadium_text[:int(max_stadium_width/(FONT_SIZE_SMALL*0.5))-3] + "..."
 
 
-            # Draw TV Info
+                draw.text((right_pane_x_start + 10, y_pos), current_stadium_text, font=font_small, fill=TEXT_COLOR)
+                y_pos += FONT_SIZE_SMALL + 8 # Spacing after stadium
+
             if broadcast_list:
                 tv_label_y = y_pos
                 draw.text((right_pane_x_start + 10, tv_label_y), "TV:", font=font_small_bold, fill=TEXT_COLOR)
@@ -473,7 +467,7 @@ def create_schedule_image(games, standings, logo_obj, output_filename="cardinals
                 draw.text((right_pane_x_start + 10, y_pos), "TV: TBD", font=font_small_bold, fill=TEXT_COLOR)
                 y_pos += FONT_SIZE_SMALL + 5
 
-            y_pos += 25 # Increased gap between game entries
+            y_pos += 25 
     
     refresh_date_str = f"Data refreshed on {datetime.now().strftime('%m-%d-%Y')}"
     text_width = draw.textlength(refresh_date_str, font=font_xsmall)
