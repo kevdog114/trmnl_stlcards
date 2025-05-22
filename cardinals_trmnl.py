@@ -368,7 +368,7 @@ if __name__ == "__main__":
     redirect_json_content = {
         "url": static_image_url_in_repo, 
         "filename": dynamic_filename_for_json_property,
-        "refresh_rate": 300 # Added refresh_rate
+        "refresh_rate": 3600 # Added refresh_rate
     }
     try:
         # Ensure directory for JSON exists if JSON_REDIRECT_FILENAME includes a path
