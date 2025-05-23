@@ -7,7 +7,7 @@ on:
     # Runs every day at 7:00 AM UTC (adjust as needed)
     # Example: '0 7 * * *' for 7 AM UTC daily
     # Example: '0 */6 * * *' for every 6 hours
-    - cron: '0 12 * * *' # Runs at 12:00 PM UTC daily
+    - cron: '0 7 * * *' # Runs at 12:00 PM UTC daily
   workflow_dispatch: # Allows manual triggering from the Actions tab
   push:
     branches:
